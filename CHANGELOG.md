@@ -1,3 +1,3 @@
-## 1.0.0 (June, 2020)
+## 0.1.0 (July, 2020)
 
-Initial version
+Basic operations
