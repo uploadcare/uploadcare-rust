@@ -62,7 +62,7 @@ mod ucare;
 pub use ucare::rest::{ApiVersion as RestApiVersion, Client as RestClient, Config as RestConfig};
 
 #[cfg(feature = "upload")]
-pub use ucare::upload::Client as UploadClient;
+pub use ucare::upload::{Client as UploadClient, Config as UploadConfig};
 
 #[cfg(feature = "rest")]
 pub mod conversion;
