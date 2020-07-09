@@ -264,10 +264,10 @@ pub enum FromUrlData {
 pub struct FileToken {
     /// Value: "token"
     #[serde(rename = "type")]
-    data_type: String,
+    pub data_type: String,
     /// A token to identify a file for the upload status request
     #[serde(skip_serializing_if = "Option::is_none")]
-    token: Option<String>,
+    pub token: Option<String>,
 }
 
 /// Holds the response returned by `from_url_status`
@@ -387,9 +387,9 @@ pub struct MultipartParams {
 #[derive(Debug, Deserialize)]
 pub struct MultipartData {
     /// Array of presigned-url strings    
-    parts: Vec<String>,
+    pub parts: Vec<String>,
     /// Uploaded file UUID
-    uuid: String,
+    pub uuid: String,
 }
 
 /// Upload status

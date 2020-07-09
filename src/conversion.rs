@@ -93,9 +93,9 @@ pub struct JobParams {
     ///   /page/:number/ converts a single page of a multi-paged document to
     /// either jpg or png. The method will not work for any other target
     /// formats. :number stands for the one-based number of a page to convert.
-    paths: Vec<String>,
+    pub paths: Vec<String>,
     /// Flag indicating if we should store your outputs.
-    store: Option<ToStore>,
+    pub store: Option<ToStore>,
 }
 
 /// MUST be either true or false
@@ -113,23 +113,23 @@ pub enum ToStore {
 #[derive(Debug, Deserialize)]
 pub struct JobResult {
     /// Problems related to your processing job, if any. Key is the path you requested.
-    problems: Option<HashMap<String, String>>,
+    pub problems: Option<HashMap<String, String>>,
     /// Result for each requested path, in case of no errors for that path.
-    result: Option<Vec<JobInfo>>,
+    pub result: Option<Vec<JobInfo>>,
 }
 
 /// Conversion job info
 #[derive(Debug, Deserialize)]
 pub struct JobInfo {
     /// UUID of your converted document
-    uuid: String,
+    pub uuid: String,
     /// UUID of a file group with thumbnails for an output video,
     /// based on the `thumbs` operation parameters
-    thumbnails_group_id: Option<String>,
+    pub thumbnails_group_id: Option<String>,
     /// Source file identifier including a target format, if present
-    original_source: Option<String>,
+    pub original_source: Option<String>,
     /// Conversion job token that can be used to get a job status
-    token: Option<i32>,
+    pub token: Option<i32>,
 }
 
 /// Conversion job status request result
@@ -141,9 +141,9 @@ pub struct StatusResult {
     /// finished   — the conversion is finished.
     /// failed     — we failed to convert the source, see error for details.
     /// canceled   — the conversion was canceled.
-    status: String,
+    pub status: String,
     /// Conversion error if we were unable to handle your file
-    error: Option<String>,
+    pub error: Option<String>,
     /// Result repeats the contents of your processing output
-    result: JobInfo,
+    pub result: JobInfo,
 }
