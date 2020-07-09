@@ -1,4 +1,6 @@
-# uploadcare-rust
+# Uploadcare-Rust: rust client for [Uploadcare]("https://uploadcare.com/") REST and upload API
+
+![](https://github.com/yarikbratashchuk/uploadcare-rust/workflows/test/badge.svg)
 
 <img 
 	align="right"
@@ -10,30 +12,15 @@
 
 Rust library for accessing Uploadcare API https://uploadcare.com/
 
-### Table of Contents
+### Cargo.toml
 
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Documentation](#documentation)
-- [Feature Flags](#Feature Flags)
-
-### Requirements
-
-cargo 1.43
-rustc 1.43
-
-### Installation
-
-You can start using it by first adding it to your `Cargo.toml`:
-
-```
+```toml
 [dependencies]
 uploadcare = "0.1.0"
 ```
 
-### Documentation
+### REST API example 
 
-To get started you need to create a client:
 ```rust
 use ucare;
 use ucare::file;
@@ -46,12 +33,8 @@ let config = ucare::RestConfig {
     sign_based_auth: true,
     api_version: ucare::RestApiVersion::V06,
 };
-
 let rest_client = ucare::RestClient::new(config, creds).unwrap();
-```
 
-Getting a list of files:
-```rust
 let file_svc = file::new_svc(&rest_client);
 
 let file_id = "b7c1bf20-0f4c-4ba4-b3a8-a74ebc663752";
@@ -59,9 +42,31 @@ let file_info = file_svc.info(file_id).unwrap();
 println!("{}: {:?}", file_id, file_info);
 ```
 
+### Upload API example
+
+```rust
+use ucare::upload;
+
+let config = ucare::UploadConfig {
+    sign_based_upload: true,
+};
+let upload_client = ucare::UploadClient::new(config, creds).unwrap();
+
+let upload_svc = upload::new_svc(&upload_client);
+
+let params = upload::FileParams {
+    path: "/path/to/file".to_string(),
+    name: "filename".to_string(),
+    to_store: Some(upload::ToStore::Auto),
+};
+let file = upload_svc.file(params).unwrap();
+println!("uploaded: {:?}", file.id);
+
+```
+
 ### Feature Flags
 
-By default the `full` uploadcare api is enabled (REST and Upload API).
+By default the `full` is enabled (REST and Upload API).
 
 To reduce code size, disable default features and enable just the APIs you use:
 
