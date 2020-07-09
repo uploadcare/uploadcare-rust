@@ -1,4 +1,4 @@
-# Uploadcare-Rust: rust client for [Uploadcare]("https://uploadcare.com/") REST and upload API
+# Uploadcare-Rust
 
 ![](https://github.com/yarikbratashchuk/uploadcare-rust/workflows/test/badge.svg)
 
