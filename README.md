@@ -8,7 +8,7 @@
 	alt=""
 />
 
-![](https://github.com/yarikbratashchuk/uploadcare-rust/workflows/test/badge.svg)
+![Test](https://github.com/yarikbratashchuk/uploadcare-rust/workflows/Test/badge.svg)
 
 Rust library for accessing Uploadcare API https://uploadcare.com/
 
