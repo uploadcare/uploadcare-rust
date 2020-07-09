@@ -8,6 +8,7 @@ readme = "README.md"
 homepage = "https://github.com/yarikbratashchuk/uploadcare-rust"
 repository= "https://github.com/yarikbratashchuk/uploadcare-rust"
 documentation = "https://docs.rs/uploadcare"
+description = "Rust client for the Uploadcare REST and Upload API"
 keywords = ["uploadcare", "api"]
 categories = ["api-bindings"]
 
