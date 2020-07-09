@@ -33,7 +33,7 @@ pub fn new_svc(client: &Client) -> Service {
 
 impl Service<'_> {
     /// Acquires some file specific info
-    pub fn info(&self, group_id: &str) -> Result<Info> {
+    pub fn info(&self, group_id: String) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::GET,
             format!("/groups/{}/", group_id),
@@ -44,18 +44,19 @@ impl Service<'_> {
 
     /// Returns a list of groups
     ///
-    /// ```rust
-    /// let params = ListParams{
-    ///     limit: Some(10),
-    ///     ordering: Some(Ordering::CreatedAtDesc),
-    /// }
-    /// let cur_page = group.list(params)?;
+    /// ```rust,ignore
+    /// # use ucare::group;
     ///
-    /// let mut cur_page = file.list(params)?;
+    /// let params = group::ListParams{
+    ///     limit: Some(10),
+    ///     ordering: Some(group::Ordering::CreatedAtDesc),
+    ///     from: None,
+    /// }
+    /// let mut cur_page = group_svc.list(params)?;
     ///
     /// let mut groups = cur_page.results.unwrap();
     /// while let Some(next_page) = cur_page.next {
-    ///     let new_page = file.get_page(next_page)?;
+    ///     let new_page = group_svc.get_page(next_page)?;
     ///
     ///     groups.extend(new_page.results.unwrap());
     ///
@@ -82,7 +83,7 @@ impl Service<'_> {
     }
 
     /// Marks all files in group as stored
-    pub fn store(&self, group_id: &str) -> Result<Info> {
+    pub fn store(&self, group_id: String) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::PUT,
             format!("/groups/{}/storage/", group_id),

@@ -27,7 +27,7 @@ pub fn new_svc(client: &Client) -> Service {
 
 impl Service<'_> {
     /// Acquires some file specific info
-    pub fn info(&self, file_id: &str) -> Result<Info> {
+    pub fn info(&self, file_id: String) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::GET,
             format!("/files/{}/", file_id),
@@ -38,16 +38,19 @@ impl Service<'_> {
 
     /// Returns a list of files
     ///
-    /// ```rust
-    /// let params = ListParams{
+    /// ```rust,ignore
+    /// # use ucare::file;
+    ///
+    /// let params = file::ListParams{
     ///     limit: Some(10),
-    ///     ordering: Some(Ordering::Size),
-    /// }
-    /// let mut cur_page = file.list(params)?;
+    ///     ordering: Some(file::Ordering::Size),
+    ///     from: None,
+    /// };
+    /// let mut cur_page = file_svc.list(params)?;
     ///
     /// let mut files = cur_page.results.unwrap();
     /// while let Some(next_page) = cur_page.next {
-    ///     let new_page = file.get_page(next_page)?;
+    ///     let new_page = file_svc.get_page(next_page)?;
     ///
     ///     files.extend(new_page.results.unwrap());
     ///
@@ -74,7 +77,7 @@ impl Service<'_> {
     }
 
     /// Store a single file by its id
-    pub fn store(&self, file_id: &str) -> Result<Info> {
+    pub fn store(&self, file_id: String) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::PUT,
             format!("/files/{}/storage/", file_id),
@@ -96,7 +99,7 @@ impl Service<'_> {
     }
 
     /// Removes file by its id
-    pub fn delete(&self, file_id: &str) -> Result<Info> {
+    pub fn delete(&self, file_id: String) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::DELETE,
             format!("/files/{}/", file_id),

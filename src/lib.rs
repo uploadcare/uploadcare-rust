@@ -8,7 +8,7 @@
 //!
 //! # use env_logger;
 //!
-//! # use file;
+//! # use ucare::file;
 //!
 //! # fn main() {
 //!     let env = env_logger::Env::default()
@@ -31,24 +31,27 @@
 //!
 //!     let rest_client = ucare::RestClient::new(config, creds).unwrap();
 //!
-//!     let file = ucare::file::new_svc(&rest_client);
+//!     let file_svc = file::new_svc(&rest_client);
 //!
 //!     // getting a list of files
 //!     let list_params = file::ListParams{
+//!         removed: Some(true),
+//!         stored: Some(true),
 //!         limit: Some(10),
 //!         ordering: Some(file::Ordering::Size),
-//!     }
-//!     let list = file.list(params).unwrap();
+//!         from: None,
+//!     };
+//!     let list = file_svc.list(list_params).unwrap();
 //!
 //!     // getting file info
-//!     let file_id = list.results.unwrap()[0].uuid;
-//!     let file_info = file.info(file_id).unwrap();
+//!     let file_id = &list.results.unwrap()[0].uuid;
+//!     let file_info = file_svc.info(file_id.to_string()).unwrap();
 //!
 //!     // store file by its id
-//!     file.store(file_id).unwrap()
+//!     file_svc.store(file_id.to_string()).unwrap();
 //!
 //!     // remove file by its id
-//!     file.delete(file_id).unwrap()
+//!     file_svc.delete(file_id.to_string()).unwrap();
 //! # }
 //! ```
 //!
@@ -59,10 +62,12 @@
 mod ucare;
 
 #[cfg(feature = "rest")]
-pub use ucare::rest::{ApiVersion as RestApiVersion, Client as RestClient, Config as RestConfig};
+pub use crate::ucare::rest::{
+    ApiVersion as RestApiVersion, Client as RestClient, Config as RestConfig,
+};
 
 #[cfg(feature = "upload")]
-pub use ucare::upload::{Client as UploadClient, Config as UploadConfig};
+pub use crate::ucare::upload::{Client as UploadClient, Config as UploadConfig};
 
 #[cfg(feature = "rest")]
 pub mod conversion;
@@ -74,4 +79,4 @@ pub mod group;
 #[cfg(feature = "upload")]
 pub mod upload;
 
-pub use ucare::{ApiCreds, ErrValue, Error, Result};
+pub use crate::ucare::{ApiCreds, ErrValue, Error, Result};
