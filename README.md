@@ -73,4 +73,4 @@ uploadare = { version = "*", default-features = false, features = ["rest"] }
 ----
 
 
-MIT License. Copyright (c) 2020 Uploadcare
+MIT License
