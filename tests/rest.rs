@@ -151,11 +151,12 @@ fn conversion() {
     };
     let job_result = conv_svc.document(params).unwrap();
     if let Some(mut jobs) = job_result.result {
-        let job = jobs.pop().unwrap();
-        let token = job.token.unwrap();
+        if let Some(job) = jobs.pop() {
+            let token = job.token.unwrap();
 
-        let status = conv_svc.document_status(token).unwrap();
+            let status = conv_svc.document_status(token).unwrap();
 
-        assert_eq!(status.error, None);
+            assert_eq!(status.error, None);
+        }
     }
 }
