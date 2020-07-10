@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
         channel: [stable]
-        os: [ubuntu, macos, windows]
+        os: [ubuntu]
     steps:
     - uses: actions/checkout@v2
     - run: rustup default ${{ matrix.channel }}
