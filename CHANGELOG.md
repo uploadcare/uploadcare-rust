@@ -1,3 +1,9 @@
+## 0.1.2 (Jul 10, 2019)
+
+FIXES:
+
+* Typos
+
 ## 0.1.1 (Jul 10, 2019)
 
 IMPROVEMENTS:
