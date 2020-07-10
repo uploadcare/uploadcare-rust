@@ -73,7 +73,7 @@ To reduce code size, disable default features and enable just the APIs you use:
 
 ```toml
 # Example: REST API only
-uploadare = { version = "*", default-features = false, features = ["rest"] }
+uploadcare = { version = "*", default-features = false, features = ["rest"] }
 ```
 
 ----
