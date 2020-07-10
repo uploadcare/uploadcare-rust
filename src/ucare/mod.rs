@@ -14,7 +14,7 @@ pub mod rest;
 #[cfg(feature = "upload")]
 pub mod upload;
 
-pub(crate) const CLIENT_VERSION: &str = "0.1.0";
+pub(crate) const CLIENT_VERSION: &str = "0.1";
 
 /// Holds per project API credentials.
 /// You can find your credentials on the uploadcare dashboard.
