@@ -14,11 +14,8 @@ jobs:
     - uses: actions/checkout@v2
     - run: rustup default ${{ matrix.channel }}
     - run: cargo build --verbose --all-targets
-    - name: Test
-      env:
-        UCARE_SECRET_KEY: ${{ secrets.UCARE_SECRET_KEY }}
-        UCARE_PUBLIC_KEY: ${{ secrets.UCARE_PUBLIC_KEY }}
-      run: cargo test -- --nocapture
+    # not running integration tests
+    - run: cargo test --lib ucare -- --nocapture
   clippy:
     runs-on: ubuntu-latest
     steps:
