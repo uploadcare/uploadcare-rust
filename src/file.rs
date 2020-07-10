@@ -27,7 +27,7 @@ pub fn new_svc(client: &Client) -> Service {
 
 impl Service<'_> {
     /// Acquires some file specific info
-    pub fn info(&self, file_id: String) -> Result<Info> {
+    pub fn info(&self, file_id: &str) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::GET,
             format!("/files/{}/", file_id),
@@ -46,15 +46,14 @@ impl Service<'_> {
     ///     ordering: Some(file::Ordering::Size),
     ///     from: None,
     /// };
-    /// let mut cur_page = file_svc.list(params)?;
+    /// let list = file_svc.list(params)?;
+    /// let mut next_page = list.next;
     ///
-    /// let mut files = cur_page.results.unwrap();
-    /// while let Some(next_page) = cur_page.next {
-    ///     let new_page = file_svc.get_page(next_page)?;
-    ///
+    /// let mut files = list.results.unwrap();
+    /// while let Some(next) = next_page {
+    ///     let new_page = file_svc.get_page(&next).unwrap();
+    ///     next_page = new_page.next;
     ///     files.extend(new_page.results.unwrap());
-    ///
-    ///     cur_page = new_page;
     /// }
     ///
     /// for f in files.iter() {
@@ -71,13 +70,13 @@ impl Service<'_> {
     }
 
     /// Gets next page by its url
-    pub fn get_page(&self, url: String) -> Result<List> {
-        let url = Url::parse(url.as_str())?;
+    pub fn get_page(&self, url: &str) -> Result<List> {
+        let url = Url::parse(url)?;
         self.client.call_url::<String, List>(Method::GET, url, None)
     }
 
     /// Store a single file by its id
-    pub fn store(&self, file_id: String) -> Result<Info> {
+    pub fn store(&self, file_id: &str) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::PUT,
             format!("/files/{}/storage/", file_id),
@@ -99,7 +98,7 @@ impl Service<'_> {
     }
 
     /// Removes file by its id
-    pub fn delete(&self, file_id: String) -> Result<Info> {
+    pub fn delete(&self, file_id: &str) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::DELETE,
             format!("/files/{}/", file_id),
@@ -415,9 +414,9 @@ pub struct List {
     pub previous: Option<String>,
     /// A total number of objects of the queried type. For files, the queried type depends on
     /// the stored and removed query parameters.
-    pub total: Option<f32>,
+    pub total: Option<i32>,
     /// Number of objects per page.
-    pub per_page: Option<f32>,
+    pub per_page: Option<i32>,
 }
 
 /// MUST be either true or false

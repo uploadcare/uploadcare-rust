@@ -34,10 +34,10 @@ impl Service<'_> {
     }
 
     /// Gets document conversion job status
-    pub fn document_status(&self, id: i32) -> Result<StatusResult> {
+    pub fn document_status(&self, token: i32) -> Result<StatusResult> {
         self.client.call::<String, String, StatusResult>(
             Method::GET,
-            format!("/convert/document/status/{}/", id),
+            format!("/convert/document/status/{}/", token),
             None,
             None,
         )
@@ -55,10 +55,10 @@ impl Service<'_> {
     }
 
     /// Gets video conversion job status
-    pub fn video_status(&self, id: i32) -> Result<StatusResult> {
+    pub fn video_status(&self, token: i32) -> Result<StatusResult> {
         self.client.call::<String, String, StatusResult>(
             Method::POST,
-            format!("convert/video/status/{}/", id),
+            format!("convert/video/status/{}/", token),
             None,
             None,
         )

@@ -33,7 +33,7 @@ pub fn new_svc(client: &Client) -> Service {
 
 impl Service<'_> {
     /// Acquires some file specific info
-    pub fn info(&self, group_id: String) -> Result<Info> {
+    pub fn info(&self, group_id: &str) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::GET,
             format!("/groups/{}/", group_id),
@@ -51,16 +51,15 @@ impl Service<'_> {
     ///     limit: Some(10),
     ///     ordering: Some(group::Ordering::CreatedAtDesc),
     ///     from: None,
-    /// }
-    /// let mut cur_page = group_svc.list(params)?;
+    /// };
+    /// let list = group_svc.list(params)?;
+    /// let mut next_page = list.next;
     ///
-    /// let mut groups = cur_page.results.unwrap();
-    /// while let Some(next_page) = cur_page.next {
-    ///     let new_page = group_svc.get_page(next_page)?;
-    ///
+    /// let mut groups = list.results.unwrap();
+    /// while let Some(next) = next_page {
+    ///     let new_page = group_svc.get_page(&next).unwrap();
+    ///     next_page = new_page.next;
     ///     groups.extend(new_page.results.unwrap());
-    ///
-    ///     cur_page = new_page;
     /// }
     ///
     /// for group in groups.iter() {
@@ -77,13 +76,13 @@ impl Service<'_> {
     }
 
     /// Gets next page by its url
-    pub fn get_page(&self, url: String) -> Result<List> {
-        let url = Url::parse(url.as_str())?;
+    pub fn get_page(&self, url: &str) -> Result<List> {
+        let url = Url::parse(url)?;
         self.client.call_url::<String, List>(Method::GET, url, None)
     }
 
     /// Marks all files in group as stored
-    pub fn store(&self, group_id: String) -> Result<Info> {
+    pub fn store(&self, group_id: &str) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::PUT,
             format!("/groups/{}/storage/", group_id),

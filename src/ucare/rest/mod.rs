@@ -68,10 +68,6 @@ impl Client {
 
         let mut headers = header::HeaderMap::new();
         headers.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("application/json"),
-        );
-        headers.insert(
             header::ACCEPT,
             header::HeaderValue::from_str(
                 format!("application/vnd.uploadcare-{}+json", &config.api_version).as_str(),
@@ -135,13 +131,20 @@ impl Client {
         D: Sized + Into<Body>,
         for<'de> R: Deserialize<'de>,
     {
-        let mut req_builder = self.client.request(method, url).header(
-            header::DATE,
-            Utc::now()
-                .format(auth::DATE_HEADER_FORMAT)
-                .to_string()
-                .replace("UTC", "GMT"),
-        );
+        let mut req_builder = self
+            .client
+            .request(method, url)
+            .header(
+                header::DATE,
+                Utc::now()
+                    .format(auth::DATE_HEADER_FORMAT)
+                    .to_string()
+                    .replace("UTC", "GMT"),
+            )
+            .header(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/json"),
+            );
         if let Some(body_data) = data {
             req_builder = req_builder.body(body_data);
         }

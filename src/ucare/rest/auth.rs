@@ -3,7 +3,7 @@
 use crypto::{digest::Digest, hmac::Hmac, mac::Mac, md5::Md5, sha1::Sha1};
 use itertools::Itertools;
 use log::debug;
-use reqwest::blocking::Request;
+use reqwest::{blocking::Request, header};
 
 use crate::ucare::ApiCreds;
 
@@ -52,9 +52,9 @@ pub fn sign_based(creds: ApiCreds) -> impl Fn(&mut Request) {
         sign_data.push('\n');
         sign_data.push_str(&body_hash[..]);
         sign_data.push('\n');
-        sign_data.push_str(req.headers()["Content-Type"].to_str().unwrap());
+        sign_data.push_str(req.headers()[header::CONTENT_TYPE].to_str().unwrap());
         sign_data.push('\n');
-        sign_data.push_str(req.headers()["Date"].to_str().unwrap());
+        sign_data.push_str(req.headers()[header::DATE].to_str().unwrap());
         sign_data.push('\n');
         sign_data.push_str(path.as_str());
 

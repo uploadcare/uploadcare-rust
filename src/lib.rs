@@ -42,13 +42,13 @@
 //!
 //! // getting file info
 //! let file_id = &list.results.unwrap()[0].uuid;
-//! let file_info = file_svc.info(file_id.to_string()).unwrap();
+//! let file_info = file_svc.info(&file_id).unwrap();
 //!
 //! // store file by its id
-//! file_svc.store(file_id.to_string()).unwrap();
+//! file_svc.store(&file_id).unwrap();
 //!
 //! // remove file by its id
-//! file_svc.delete(file_id.to_string()).unwrap();
+//! file_svc.delete(&file_id).unwrap();
 //! # }
 //! ```
 //!
