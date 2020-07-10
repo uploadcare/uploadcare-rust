@@ -4,8 +4,10 @@ on: [push, pull_request]
 jobs:
   test:
     env:
-      UCARE_SECRET_KEY: ${{ secrets.UCARE_SECRET_KEY }}
-      UCARE_PUBLIC_KEY: ${{ secrets.UCARE_PUBLIC_KEY }}
+      #UCARE_SECRET_KEY: ${{ secrets.UCARE_SECRET_KEY }}
+      #UCARE_PUBLIC_KEY: ${{ secrets.UCARE_PUBLIC_KEY }}
+      UCARE_PUBLIC_KEY: "pub_test__full"
+      UCARE_SECRET_KEY: "secrettestcef2587071391701c647"
       RUST_BACKTRACE: "1"
     runs-on: ${{ matrix.os }}-latest
     strategy:
