@@ -74,14 +74,17 @@ impl Client {
             )
             .unwrap(),
         );
+
+        println!("{}, {}", &creds.pub_key, &creds.secret_key);
+
         headers.insert(
             "X-UC-User-Agent",
-            header::HeaderValue::from_bytes(
+            header::HeaderValue::from_str(
                 format!(
                     "{}/{}/{}",
                     USER_AGENT_PREFIX, CLIENT_VERSION, &creds.pub_key
                 )
-                .as_bytes(),
+                .as_str(),
             )
             .unwrap(),
         );
