@@ -3,6 +3,9 @@ on: [push, pull_request]
 
 jobs:
   test:
+    env:
+      UCARE_SECRET_KEY: ${{ secrets.UCARE_SECRET_KEY }}
+      UCARE_PUBLIC_KEY: ${{ secrets.UCARE_PUBLIC_KEY }}
     runs-on: ${{ matrix.os }}-latest
     strategy:
       matrix:
