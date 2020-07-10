@@ -122,8 +122,6 @@ mod tests {
             .to_string()
             .replace("UTC", "GMT");
 
-        println!("{}", now);
-
         headers.insert("Date", now.parse().unwrap());
         headers.insert("Content-Type", "application/json".parse().unwrap());
 
