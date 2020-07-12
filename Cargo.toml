@@ -11,6 +11,7 @@ documentation = "https://docs.rs/uploadcare"
 description = "Rust client for the Uploadcare REST and Upload API"
 keywords = ["uploadcare", "api"]
 categories = ["api-bindings"]
+exclude = ["tests"]
 
 [lib]
 name = "ucare"
