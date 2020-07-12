@@ -19,7 +19,7 @@ Rust library for accessing Uploadcare API https://uploadcare.com/
 
 ```toml
 [dependencies]
-uploadcare = "0.1.2"
+uploadcare = "^0.1"
 ```
 
 ### REST API example 
