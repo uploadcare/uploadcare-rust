@@ -15,6 +15,7 @@
 //! larger than 10MB and implementing accelerated uploads through
 //! a distributed network.
 
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
 
 use reqwest::{blocking::multipart::Form, Method, Url};
@@ -35,7 +36,8 @@ pub fn new_svc(client: &Client) -> Service {
 
 impl Service<'_> {
     /// Uploads a file and return its unique id (uuid). Comply with the RFC7578 standard.
-    pub fn file(&self, params: FileParams) -> Result<ShortFileInfo> {
+    /// Resulting HashMap holds filenames as keys and their ids are values.
+    pub fn file(&self, params: FileParams) -> Result<HashMap<String, String>> {
         let mut form = Form::new()
             .file(params.name.to_string(), params.path.to_string())?
             .text(
@@ -49,7 +51,7 @@ impl Service<'_> {
             );
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
-        self.client.call::<String, ShortFileInfo>(
+        self.client.call::<String, HashMap<String, String>>(
             Method::POST,
             format!("/base/"),
             None,
@@ -88,7 +90,7 @@ impl Service<'_> {
     }
 
     /// Check the status of a file uploaded from URL.
-    pub fn from_url_status(&self, token: String) -> Result<FromUrlStatusData> {
+    pub fn from_url_status(&self, token: &str) -> Result<FromUrlStatusData> {
         self.client.call::<String, FromUrlStatusData>(
             Method::GET,
             format!("/from_url/status/?token={}", token),
@@ -98,7 +100,7 @@ impl Service<'_> {
     }
 
     /// Returns uploading file info.
-    pub fn file_info(&self, file_id: String) -> Result<FileInfo> {
+    pub fn file_info(&self, file_id: &str) -> Result<FileInfo> {
         let fields = (*self.client.auth_fields)();
         self.client.call::<String, FileInfo>(
             Method::GET,
@@ -120,7 +122,7 @@ impl Service<'_> {
         let mut form = Form::new();
         for (pos, id) in ids.iter().enumerate() {
             form = form.text(
-                ("file[".to_string() + pos.to_string().as_str() + "]").to_string(),
+                ("files[".to_string() + pos.to_string().as_str() + "]").to_string(),
                 id.to_string(),
             );
         }
@@ -138,7 +140,7 @@ impl Service<'_> {
     ///
     /// GroupID look like UUID~N, for example:
     ///   "d52d7136-a2e5-4338-9f45-affbf83b857d~2"
-    pub fn group_info(&self, group_id: String) -> Result<GroupInfo> {
+    pub fn group_info(&self, group_id: &str) -> Result<GroupInfo> {
         let fields = (*self.client.auth_fields)();
         self.client.call::<String, GroupInfo>(
             Method::GET,
@@ -185,12 +187,9 @@ impl Service<'_> {
     /// should be 5MB (5242880 bytes) in size except for the last one that can be smaller. You
     /// can upload file parts in parallel provided the byte order stays unchanged. Make sure to
     /// define Content-Type header for your data.
-    pub fn upload_part(&self, url: String, data: Vec<u8>) -> Result<()> {
-        self.client.call_url::<()>(
-            Method::PUT,
-            Url::parse(url.as_str())?,
-            Some(Payload::Raw(data)),
-        )
+    pub fn upload_part(&self, url: &str, data: Vec<u8>) -> Result<()> {
+        self.client
+            .call_url::<()>(Method::PUT, Url::parse(url)?, Some(Payload::Raw(data)))
     }
 
     /// Complete multipart upload transaction when all file parts are uploaded
@@ -208,6 +207,7 @@ impl Service<'_> {
 }
 
 /// Holds all possible params for the file upload
+#[derive(Default)]
 pub struct FileParams {
     /// Path of the file to upload.
     ///
@@ -220,14 +220,6 @@ pub struct FileParams {
     pub name: String,
     /// File storing behaviour.
     pub to_store: Option<ToStore>,
-}
-
-/// Holds returned file information
-#[derive(Debug, Deserialize)]
-pub struct ShortFileInfo {
-    /// file UUID
-    #[serde(rename = "file")]
-    pub id: String,
 }
 
 /// Parameters for upload from public URL link
@@ -249,7 +241,7 @@ pub struct FromUrlParams {
 
 /// Holds data returned by `from_url`
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type")]
+#[serde(untagged)]
 pub enum FromUrlData {
     /// Token
     #[serde(rename = "token")]
@@ -259,8 +251,14 @@ pub enum FromUrlData {
     FileInfo(FileInfo),
 }
 
+impl Default for FromUrlData {
+    fn default() -> Self {
+        FromUrlData::Token(FileToken::default())
+    }
+}
+
 /// Respose for the `FromUrlData::Token`
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct FileToken {
     /// Value: "token"
     #[serde(rename = "type")]
@@ -299,59 +297,50 @@ pub enum FromUrlStatusData {
     Waiting,
 }
 
+impl Default for FromUrlStatusData {
+    fn default() -> Self {
+        FromUrlStatusData::Unknown
+    }
+}
+
 /// Holds file information in the upload context
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct FileInfo {
     /// True if file is stored
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_stored: Option<bool>,
+    pub is_stored: bool,
     /// Denotes currently uploaded file size in bytes
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub done: Option<u32>,
+    pub done: u32,
     /// Same as uuid
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_id: Option<String>,
+    pub file_id: String,
     /// Total is same as size
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total: Option<u32>,
+    pub total: u32,
     /// File size in bytes
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<u32>,
+    pub size: u32,
     /// File UUID
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uuid: Option<String>,
+    pub uuid: String,
     /// If file is an image
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_image: Option<bool>,
+    pub is_image: bool,
     /// Sanitized `original_filename
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filename: Option<String>,
+    pub filename: String,
     /// Video metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub video_info: Option<VideoInfo>,
     /// If file is ready to be used after upload
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_ready: Option<bool>,
+    pub is_ready: bool,
     /// Original file name taken from uploaded file
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub original_filename: Option<String>,
+    pub original_filename: String,
     /// Image metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub image_info: Option<ImageInfo>,
     /// File MIME-type.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
+    pub mime_type: String,
     /// Your custom user bucket on which file are stored.
     /// Only available of you setup foreign storage bucket for your project
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub s3_bucket: Option<String>,
     /// CDN media transformations applied to the file when its group was created
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_effects: Option<String>,
 }
 
 /// Group information
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct GroupInfo {
     /// When group was created
     pub datetime_created: String,
@@ -371,7 +360,7 @@ pub struct GroupInfo {
 }
 
 /// Params for starting multipart upload
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MultipartParams {
     /// Original file name
     pub filename: String,
@@ -384,7 +373,7 @@ pub struct MultipartParams {
 }
 
 /// Response for starting multipart upload
-#[derive(Debug, Deserialize)]
+#[derive(Default, Debug, Deserialize)]
 pub struct MultipartData {
     /// Array of presigned-url strings    
     pub parts: Vec<String>,

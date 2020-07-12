@@ -73,7 +73,7 @@ impl Client {
     ) -> Result<R, Error>
     where
         Q: IntoUrlQuery,
-        for<'de> R: Deserialize<'de>,
+        for<'de> R: Deserialize<'de> + Default,
     {
         let url = encode_url::<Q>(API_URL, path.as_str(), query)?;
         self.call_url::<R>(method, url, data)
@@ -86,7 +86,7 @@ impl Client {
         data: Option<Payload>,
     ) -> Result<R, Error>
     where
-        for<'de> R: Deserialize<'de>,
+        for<'de> R: Deserialize<'de> + Default,
     {
         let mut req_builder = self.client.request(method, url);
         if let Some(body_data) = data {
@@ -122,10 +122,16 @@ impl Client {
             ))),
             // picking 30 seconds because retry-after is not returned from the API
             StatusCode::TOO_MANY_REQUESTS => Err(Error::with_value(ErrValue::TooManyRequests(30))),
-            StatusCode::OK | _ => {
-                let resp_data: R = res.json()?;
-                Ok(resp_data)
-            }
+            StatusCode::OK | _ => match res.json() {
+                Ok(data) => Ok(data),
+                Err(err) => {
+                    if err.to_string().contains("EOF") {
+                        Ok(R::default())
+                    } else {
+                        Err(Error::from(err))
+                    }
+                }
+            },
         }
     }
 }
