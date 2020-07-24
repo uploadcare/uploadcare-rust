@@ -1,12 +1,12 @@
 [package]
 name = "uploadcare"
-version = "0.1.3"
-authors = ["yarikbratashchuk <yarik.bratashchuk@gmail.com>"]
+version = "0.1.4"
+authors = ["yarikbratashchuk <yarikbratashchuk@protonmail.com>"]
 edition = "2018"
 license = "MIT"
 readme = "README.md"
-homepage = "https://github.com/yarikbratashchuk/uploadcare-rust"
-repository= "https://github.com/yarikbratashchuk/uploadcare-rust"
+homepage = "https://github.com/uploadcare/uploadcare-rust"
+repository= "https://github.com/uploadcare/uploadcare-rust"
 documentation = "https://docs.rs/uploadcare"
 description = "Rust client for the Uploadcare REST and Upload API"
 keywords = ["uploadcare", "api"]
