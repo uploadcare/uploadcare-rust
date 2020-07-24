@@ -1,16 +1,20 @@
-## 0.1.3 (Jul 12, 2019)
+## 0.1.4 (Jul 24, 2020)
+
+Transfered ownership to Uploadcare
+
+## 0.1.3 (Jul 12, 2020)
 
 IMPROVEMENTS:
 
 * Make some upload methods more convenient
 
-## 0.1.2 (Jul 10, 2019)
+## 0.1.2 (Jul 10, 2020)
 
 FIXES:
 
 * Typos
 
-## 0.1.1 (Jul 10, 2019)
+## 0.1.1 (Jul 10, 2020)
 
 IMPROVEMENTS:
 
