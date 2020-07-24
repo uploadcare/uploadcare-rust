@@ -8,10 +8,10 @@
 	alt=""
 />
 
-![Test](https://github.com/yarikbratashchuk/uploadcare-rust/workflows/Test/badge.svg)
+![Test](https://github.com/uploadcare/uploadcare-rust/workflows/Test/badge.svg)
 [![Documentation](https://docs.rs/uploadcare/badge.svg)](https://docs.rs/uploadcare/)
 [![Crates](https://img.shields.io/crates/v/uploadcare.svg)](https://crates.io/crates/uploadcare)
-[![License](https://img.shields.io/github/license/yarikbratashchuk/uploadcare-rust)](./LICENSE)
+[![License](https://img.shields.io/github/license/uploadcare/uploadcare-rust)](./LICENSE)
 
 Rust library for accessing Uploadcare API https://uploadcare.com/
 
