@@ -176,7 +176,7 @@ impl Client {
                 Err(Error::with_value(ErrValue::TooManyRequests(retry_after)))
             }
             StatusCode::OK | _ => {
-                let resp_data: R = res.json()?;
+                let resp_data = res.json()?;
                 Ok(resp_data)
             }
         }

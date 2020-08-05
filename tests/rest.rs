@@ -1,7 +1,9 @@
 //! Itegration tests for all of the REST API.
 //! Very primitive approach.
 
-use ucare::{self, conversion, file, group};
+use rand::Rng;
+
+use ucare::{self, conversion, file, group, webhook};
 
 mod testenv;
 
@@ -159,4 +161,44 @@ fn conversion() {
             assert_eq!(status.error, None);
         }
     }
+}
+
+#[test]
+fn webhook() {
+    let client = rest_client_v06();
+    let webhook_svc = webhook::new_svc(&client);
+
+    // list
+    let list = webhook_svc.list().unwrap();
+    assert!(list.len() > 0);
+    assert_ne!(list.get(0).unwrap().id, 0);
+
+    // create
+    let mut rng = rand::thread_rng();
+    let suff: u8 = rng.gen();
+    let target_url = format!("https://localhost:8080/test_endpoint{}", suff);
+    let create_params = webhook::CreateParams {
+        event: webhook::Event::FileUploaded,
+        target_url: target_url.clone(),
+        is_active: None,
+    };
+    let hook = webhook_svc.create(create_params).unwrap();
+    assert!(hook.is_active);
+    assert!(hook.created.len() > 0);
+    assert!(hook.updated.len() > 0);
+
+    // update
+    let update_params = webhook::UpdateParams {
+        id: hook.id,
+        event: None,
+        target_url: None,
+        is_active: Some(false),
+    };
+    let hook = webhook_svc.update(update_params).unwrap();
+    assert!(!hook.is_active);
+
+    // delete
+    let delete_params = webhook::DeleteParams { target_url };
+    let res = webhook_svc.delete(delete_params).unwrap();
+    assert_eq!(res, ());
 }

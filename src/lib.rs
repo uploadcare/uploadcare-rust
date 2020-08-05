@@ -73,6 +73,8 @@ pub mod conversion;
 pub mod file;
 #[cfg(feature = "rest")]
 pub mod group;
+#[cfg(feature = "rest")]
+pub mod webhook;
 
 #[cfg(feature = "upload")]
 pub mod upload;
