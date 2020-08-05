@@ -74,6 +74,8 @@ pub mod file;
 #[cfg(feature = "rest")]
 pub mod group;
 #[cfg(feature = "rest")]
+pub mod project;
+#[cfg(feature = "rest")]
 pub mod webhook;
 
 #[cfg(feature = "upload")]

@@ -3,7 +3,7 @@
 
 use rand::Rng;
 
-use ucare::{self, conversion, file, group, webhook};
+use ucare::{self, conversion, file, group, project, webhook};
 
 mod testenv;
 
@@ -201,4 +201,15 @@ fn webhook() {
     let delete_params = webhook::DeleteParams { target_url };
     let res = webhook_svc.delete(delete_params).unwrap();
     assert_eq!(res, ());
+}
+
+#[test]
+fn project() {
+    let client = rest_client_v06();
+    let project_svc = project::new_svc(&client);
+
+    // info
+    let info = project_svc.info().unwrap();
+    assert_ne!(info.name, "".to_string());
+    assert_ne!(info.pub_key, "".to_string());
 }
