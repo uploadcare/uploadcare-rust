@@ -22,7 +22,7 @@ const API_URL: &str = "https://api.uploadcare.com";
 pub enum ApiVersion {
     /// API version v0.5
     V05,
-    /// API version v0.6
+    /// API version v0.6 (prefered)
     V06,
 }
 
