@@ -1,3 +1,10 @@
+## 0.2.0 (August 19, 2020)
+
+FEATURES:
+
+* Webhooks
+* Project
+
 ## 0.1.4 (Jul 24, 2020)
 
 Transfered ownership to Uploadcare
