@@ -15,45 +15,70 @@
 
 Rust library for accessing Uploadcare API https://uploadcare.com/
 
-### Cargo.toml
+### Table of Contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+
+### Requirements
+ 
+rustc 1.43
+cargo 1.43
+
+### Installation
 
 ```toml
 [dependencies]
 uploadcare = "^0.1"
 ```
 
-### REST API example 
+#### Feature Flags
+
+By default the `full` is enabled (REST and Upload API).
+
+To reduce code size, disable default features and enable just the APIs you use:
+
+```toml
+# Example: REST API only
+uploadcare = { version = "*", default-features = false, features = ["rest"] }
+```
+
+### Configuration 
 
 ```rust
 use ucare;
 use ucare::file;
+use ucare::upload;
 
-let creds = ucare::ApiCreds {
+let creds = ucare::apicreds {
     secret_key: "your_project_secret_key",
     pub_key: "your_project_pub_key",
 };
+
+// creating rest client
 let config = ucare::RestConfig {
     sign_based_auth: true,
-    api_version: ucare::RestApiVersion::V06,
+    api_version: ucare::RestApiVersion::v06,
 };
 let rest_client = ucare::RestClient::new(config, creds).unwrap();
 
+// creating upload client
+let config = ucare::UploadConfig {
+    sign_based_upload: true,
+};
+let upload_client = ucare::UploadClient::new(config, creds).unwrap();
+```
+
+### Usage
+
+```rust
 let file_svc = file::new_svc(&rest_client);
 
 let file_id = "b7c1bf20-0f4c-4ba4-b3a8-a74ebc663752";
 let file_info = file_svc.info(file_id).unwrap();
 println!("{}: {:?}", file_id, file_info);
-```
-
-### Upload API example
-
-```rust
-use ucare::upload;
-
-let config = ucare::UploadConfig {
-    sign_based_upload: true,
-};
-let upload_client = ucare::UploadClient::new(config, creds).unwrap();
 
 let upload_svc = upload::new_svc(&upload_client);
 
@@ -67,18 +92,8 @@ println!("uploaded: {:?}", file.id);
 
 ```
 
-### Feature Flags
-
-By default the `full` is enabled (REST and Upload API).
-
-To reduce code size, disable default features and enable just the APIs you use:
-
-```toml
-# Example: REST API only
-uploadcare = { version = "*", default-features = false, features = ["rest"] }
-```
 
 ----
 
 
-MIT License
+MIT License. Copyright (c) 2020 Uploadcare
