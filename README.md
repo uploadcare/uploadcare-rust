@@ -24,7 +24,7 @@ Rust library for accessing Uploadcare API https://uploadcare.com/
 
 ### Requirements
  
-rustc 1.43
+rustc 1.43   
 cargo 1.43
 
 ### Installation
