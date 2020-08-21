@@ -1,40 +1,31 @@
-# Uploadcare-Rust
+# Rust API client for Uploadcare
 
-<img 
-	align="right"
-	width="64"
-	height="64"
-	src="https://ucarecdn.com/2f4864b7-ed0e-4411-965b-8148623aa680/uploadcare-logo-mark.svg"
-	alt=""
-/>
-
+[![License](https://img.shields.io/github/license/uploadcare/uploadcare-rust)](./LICENSE)
 ![rest](https://github.com/uploadcare/uploadcare-rust/workflows/test/badge.svg)
 [![Documentation](https://docs.rs/uploadcare/badge.svg)](https://docs.rs/uploadcare/)
 [![Crates](https://img.shields.io/crates/v/uploadcare.svg)](https://crates.io/crates/uploadcare)
-[![License](https://img.shields.io/github/license/uploadcare/uploadcare-rust)](./LICENSE)
 
-Rust library for accessing Uploadcare API https://uploadcare.com/
-
-### Table of Contents
+Uploadcare Rust API client that handles uploads and further operations with files by wrapping Uploadcare Upload and REST APIs.
 
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Useful links](#useful-links)
 
-### Requirements
+## Requirements
  
 rustc 1.43   
 cargo 1.43
 
-### Installation
+## Installation
 
 ```toml
 [dependencies]
 uploadcare = "^0.1"
 ```
 
-#### Feature Flags
+## Feature Flags
 
 By default the `full` is enabled (REST and Upload API).
 
@@ -45,7 +36,7 @@ To reduce code size, disable default features and enable just the APIs you use:
 uploadcare = { version = "*", default-features = false, features = ["rest"] }
 ```
 
-### Configuration 
+## Configuration 
 
 ```rust
 use ucare;
@@ -71,7 +62,10 @@ let config = ucare::UploadConfig {
 let upload_client = ucare::UploadClient::new(config, creds).unwrap();
 ```
 
-### Usage
+## Usage
+
+For a comprehensive list of examples, check out the [API documentation](https://docs.rs/uploadcare/).
+Below are a few usage examples:
 
 ```rust
 let file_svc = file::new_svc(&rest_client);
@@ -92,8 +86,13 @@ println!("uploaded: {:?}", file.id);
 
 ```
 
+## Useful links
 
-----
-
-
-MIT License. Copyright (c) 2020 Uploadcare
+[Rust API client documentation](https://docs.rs/uploadcare/)  
+[Uploadcare documentation](https://uploadcare.com/docs/?utm_source=github&utm_medium=referral&utm_campaign=uploadcare-rust)  
+[Upload API reference](https://uploadcare.com/api-refs/upload-api/?utm_source=github&utm_medium=referral&utm_campaign=uploadcare-rust)  
+[REST API reference](https://uploadcare.com/api-refs/rest-api/?utm_source=github&utm_medium=referral&utm_campaign=uploadcare-rust)  
+[Changelog](https://github.com/uploadcare/uploadcare-rust/blob/master/CHANGELOG.md)  
+[Contributing guide](https://github.com/uploadcare/.github/blob/master/CONTRIBUTING.md)  
+[Security policy](https://github.com/uploadcare/uploadcare-rust/security/policy)  
+[Support](https://github.com/uploadcare/.github/blob/master/SUPPORT.md)  
