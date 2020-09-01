@@ -98,12 +98,10 @@ impl Service<'_> {
     }
 
     /// Removes file by its id
-    /// TODO: fix the endpoing when Uploadcare will fix redirect auth hash calculation logic
     pub fn delete(&self, file_id: &str) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::DELETE,
-            //format!("/files/{}/storage/", file_id),
-            format!("/files/{}/", file_id),
+            format!("/files/{}/storage/", file_id),
             None,
             None,
         )

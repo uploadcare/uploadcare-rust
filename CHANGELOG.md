@@ -1,3 +1,9 @@
+## 0.2.1 (Sep 1, 2020)
+
+IMPROVEMENTS:
+
+* Update file delete endpoint
+
 ## 0.2.0 (August 19, 2020)
 
 FEATURES:
