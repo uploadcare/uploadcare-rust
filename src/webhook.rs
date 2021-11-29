@@ -87,6 +87,8 @@ pub struct Info {
     pub event: String,
     /// Where webhook data will be POSTed
     pub target_url: String,
+    /// Webhook payload signing secret
+    pub signing_secret: String,
     /// Webhook project ID
     pub project: i32,
     /// Whether it is active
@@ -101,6 +103,9 @@ pub struct CreateParams {
     /// A URL that is triggered by an event, for example, a file upload. A target URL MUST be
     /// unique for each project — event type combination.
     pub target_url: String,
+    /// Payload can be signed with a secret to ensure that the request comes from the expected
+    /// sender. Leave None if you don't want to change it
+    pub signing_secret: Option<String>,
     /// Marks a subscription as either active or not, defaults to true, otherwise false.
     pub is_active: Option<bool>,
 }
@@ -126,6 +131,9 @@ pub struct UpdateParams {
     /// it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_url: Option<String>,
+    /// Payload can be signed with a secret to ensure that the request comes from the expected
+    /// sender
+    pub signing_secret: Option<String>,
     /// Marks a subscription as either active or not, leave it None if you don't want to change it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_active: Option<bool>,
