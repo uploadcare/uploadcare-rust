@@ -165,6 +165,9 @@ fn conversion() {
 
 #[test]
 fn webhook() {
+    let sign_secret = "test_signing_secret";
+    let new_sign_secret = "new_signing_secret";
+
     let client = rest_client_v06();
     let webhook_svc = webhook::new_svc(&client);
 
@@ -180,22 +183,26 @@ fn webhook() {
     let create_params = webhook::CreateParams {
         event: webhook::Event::FileUploaded,
         target_url: target_url.clone(),
+        signing_secret: Some(sign_secret.to_string()),
         is_active: None,
     };
     let hook = webhook_svc.create(create_params).unwrap();
     assert!(hook.is_active);
     assert!(hook.created.len() > 0);
     assert!(hook.updated.len() > 0);
+    assert_eq!(hook.signing_secret, sign_secret);
 
     // update
     let update_params = webhook::UpdateParams {
         id: hook.id,
         event: None,
         target_url: None,
+        signing_secret: Some(new_sign_secret.to_string()),
         is_active: Some(false),
     };
     let hook = webhook_svc.update(update_params).unwrap();
     assert!(!hook.is_active);
+    assert_eq!(hook.signing_secret, new_sign_secret);
 
     // delete
     let delete_params = webhook::DeleteParams { target_url };
