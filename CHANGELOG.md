@@ -1,3 +1,9 @@
+## 0.3.0 (Dec 4, 2021)
+
+FEATURES:
+
+* Added support for Webhook's [signing secret](https://uploadcare.com/docs/security/secure-webhooks/).
+
 ## 0.2.1 (Sep 1, 2020)
 
 IMPROVEMENTS:
