@@ -86,6 +86,8 @@ println!("uploaded: {:?}", file.id);
 
 ```
 
+In examples we’re going to use `ucarecdn.com` domain. Check your project's subdomain in the [Dashboard](https://app.uploadcare.com/projects/-/settings/#delivery).
+
 ## Useful links
 
 [Rust API client documentation](https://docs.rs/uploadcare/)  
