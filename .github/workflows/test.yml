@@ -11,7 +11,7 @@ jobs:
         channel: [stable]
         os: [ubuntu]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - run: rustup default ${{ matrix.channel }}
     - run: cargo build --verbose --all-targets
     # not running integration tests
@@ -19,5 +19,5 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - run: cargo clippy

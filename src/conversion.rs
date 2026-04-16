@@ -34,7 +34,7 @@ impl Service<'_> {
     }
 
     /// Gets document conversion job status
-    pub fn document_status(&self, token: i32) -> Result<StatusResult> {
+    pub fn document_status(&self, token: i64) -> Result<StatusResult> {
         self.client.call::<String, String, StatusResult>(
             Method::GET,
             format!("/convert/document/status/{}/", token),
@@ -129,7 +129,22 @@ pub struct JobInfo {
     /// Source file identifier including a target format, if present
     pub original_source: Option<String>,
     /// Conversion job token that can be used to get a job status
-    pub token: Option<i32>,
+    pub token: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_info_token_deserializes_as_i64() {
+        let json = r#"{
+            "uuid": "a18983d0-b0d7-4c8d-968b-2e6d2e1c3ea1",
+            "token": 3000000000
+        }"#;
+        let info: JobInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.token, Some(3_000_000_000_i64));
+    }
 }
 
 /// Conversion job status request result
