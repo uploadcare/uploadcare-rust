@@ -3,7 +3,7 @@
 test: test-unit test-integration
 
 test-unit:
-	cargo test --lib ucare -- --nocapture
+	cargo test --lib -- --nocapture
 
 test-integration:
 	UCARE_SECRET_KEY=$(UCARE_SECRET_KEY) UCARE_PUBLIC_KEY=$(UCARE_PUBLIC_KEY) \

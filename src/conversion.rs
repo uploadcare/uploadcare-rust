@@ -132,6 +132,21 @@ pub struct JobInfo {
     pub token: Option<i64>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_info_token_deserializes_as_i64() {
+        let json = r#"{
+            "uuid": "a18983d0-b0d7-4c8d-968b-2e6d2e1c3ea1",
+            "token": 3000000000
+        }"#;
+        let info: JobInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.token, Some(3_000_000_000_i64));
+    }
+}
+
 /// Conversion job status request result
 #[derive(Debug, Deserialize)]
 pub struct StatusResult {
