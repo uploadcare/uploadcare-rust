@@ -1,3 +1,9 @@
+## 0.3.1 (Apr 16, 2026)
+
+IMPROVEMENTS:
+
+* Change document conversion token type from `i32` to `i64`
+
 ## 0.3.0 (Dec 4, 2021)
 
 FEATURES:

@@ -34,7 +34,7 @@ impl Service<'_> {
     }
 
     /// Gets document conversion job status
-    pub fn document_status(&self, token: i32) -> Result<StatusResult> {
+    pub fn document_status(&self, token: i64) -> Result<StatusResult> {
         self.client.call::<String, String, StatusResult>(
             Method::GET,
             format!("/convert/document/status/{}/", token),
@@ -129,7 +129,7 @@ pub struct JobInfo {
     /// Source file identifier including a target format, if present
     pub original_source: Option<String>,
     /// Conversion job token that can be used to get a job status
-    pub token: Option<i32>,
+    pub token: Option<i64>,
 }
 
 /// Conversion job status request result
