@@ -14,7 +14,9 @@ pub mod rest;
 #[cfg(feature = "upload")]
 pub mod upload;
 
-pub(crate) const CLIENT_VERSION: &str = "0.1";
+/// Version reported in the `X-UC-User-Agent` header. Taken from the crate
+/// manifest so it never drifts away from the published version.
+pub(crate) const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Holds per project API credentials.
 /// You can find your credentials on the uploadcare dashboard.

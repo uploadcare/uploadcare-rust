@@ -23,7 +23,7 @@
 //! };
 //! let config = ucare::RestConfig {
 //!     sign_based_auth: true,
-//!     api_version: ucare::RestApiVersion::V05,
+//!     api_version: ucare::RestApiVersion::V07,
 //! };
 //!
 //! let rest_client = ucare::RestClient::new(config, creds).unwrap();
