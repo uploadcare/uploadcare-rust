@@ -184,6 +184,9 @@ impl Client {
             StatusCode::NOT_ACCEPTABLE => Err(Error::with_value(ErrValue::NotAcceptable(
                 error_detail(res, "not acceptable"),
             ))),
+            StatusCode::CONFLICT => Err(Error::with_value(ErrValue::Conflict(error_detail(
+                res, "conflict",
+            )))),
             StatusCode::PAYLOAD_TOO_LARGE => Err(Error::with_value(ErrValue::PayloadTooLarge(
                 error_detail(res, "payload too large"),
             ))),

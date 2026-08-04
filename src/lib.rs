@@ -72,6 +72,8 @@ pub use crate::ucare::rest::{
 pub use crate::ucare::upload::{Client as UploadClient, Config as UploadConfig};
 
 #[cfg(feature = "rest")]
+pub mod addons;
+#[cfg(feature = "rest")]
 pub mod conversion;
 #[cfg(feature = "rest")]
 pub mod file;

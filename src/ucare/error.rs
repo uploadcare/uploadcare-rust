@@ -103,6 +103,9 @@ pub enum ErrValue {
     MethodNotAllowed(String),
     /// Invalid version header `Accept` for the endpoint
     NotAcceptable(String),
+    /// Request conflicts with the current state of the resource. Add-Ons use it to
+    /// report that the same application is already processing the same file.
+    Conflict(String),
     /// Payload too large
     PayloadTooLarge(String),
     /// Request was throttled
@@ -135,6 +138,7 @@ impl fmt::Display for ErrValue {
             ErrValue::NotFound(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::MethodNotAllowed(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::NotAcceptable(ref msg) => write!(f, "{}: {}", prefix, msg),
+            ErrValue::Conflict(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::PayloadTooLarge(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::TooManyRequests(ref retry_after) => write!(
                 f,
