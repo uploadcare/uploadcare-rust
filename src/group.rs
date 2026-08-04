@@ -81,14 +81,24 @@ impl Service<'_> {
         self.client.call_url::<String, List>(Method::GET, url, None)
     }
 
-    /// Marks all files in group as stored
-    pub fn store(&self, group_id: &str) -> Result<Info> {
-        self.client.call::<String, String, Info>(
-            Method::PUT,
-            format!("/groups/{}/storage/", group_id),
+    /// Removes a group by its id. Available since APIv0.7 only.
+    pub fn delete(&self, group_id: &str) -> Result<()> {
+        let res = self.client.call::<String, String, serde_json::Value>(
+            Method::DELETE,
+            format!("/groups/{}/", group_id),
             None,
             None,
-        )
+        );
+
+        // a successful delete answers with an empty body, which the client reports
+        // as a deserialization error; same normalization as in `webhook::delete`
+        if let Err(err) = res {
+            if !err.to_string().contains("EOF") {
+                return Err(err);
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -99,8 +109,6 @@ pub struct Info {
     pub id: String,
     /// date and time when a group was created
     pub datetime_created: Option<String>,
-    /// date and time when a group was stored
-    pub datetime_stored: Option<String>,
     /// number of files in a group
     pub files_count: i32,
     /// public CDN URL for a group
@@ -179,7 +187,58 @@ pub struct List {
     /// Previous page URL.
     pub previous: Option<String>,
     /// A total number of objects of the queried type.
-    pub total: Option<f32>,
+    pub total: Option<i32>,
     /// Number of objects per page.
-    pub per_page: Option<f32>,
+    pub per_page: Option<i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn info_deserializes_without_datetime_stored() {
+        // v0.7 dropped datetime_stored together with the ability to mark a group
+        // as stored
+        let json = r#"{
+            "id": "badfc9f7-f88f-4921-9cc0-22e2c08aa2da~12",
+            "datetime_created": "2026-08-04T10:00:00Z",
+            "files_count": 12,
+            "cdn_url": "https://ucarecdn.com/badfc9f7-f88f-4921-9cc0-22e2c08aa2da~12/",
+            "url": "https://api.uploadcare.com/groups/badfc9f7-f88f-4921-9cc0-22e2c08aa2da~12/"
+        }"#;
+        let info: Info = serde_json::from_str(json).unwrap();
+
+        assert_eq!(info.files_count, 12);
+        assert_eq!(
+            info.datetime_created,
+            Some("2026-08-04T10:00:00Z".to_string()),
+        );
+    }
+
+    #[test]
+    fn list_totals_are_integers() {
+        let json = r#"{
+            "next": null,
+            "previous": null,
+            "total": 42,
+            "per_page": 100,
+            "results": []
+        }"#;
+        let list: List = serde_json::from_str(json).unwrap();
+
+        assert_eq!(list.total, Some(42));
+        assert_eq!(list.per_page, Some(100));
+    }
+
+    #[test]
+    fn list_params_query_defaults() {
+        let params = ListParams {
+            limit: None,
+            ordering: None,
+            from: None,
+        };
+
+        assert_eq!(params.into_query(), "limit=100&ordering=datetime_created",);
+    }
 }
