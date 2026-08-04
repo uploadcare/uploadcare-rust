@@ -28,11 +28,16 @@ pub fn new_svc(client: &Client) -> Service {
 
 impl Service<'_> {
     /// Acquires some file specific info
-    pub fn info(&self, file_id: &str) -> Result<Info> {
+    ///
+    /// Pass `Some(Include::Appdata)` to get the `appdata` field populated, `None`
+    /// for a regular request.
+    pub fn info(&self, file_id: &str, include: Option<Include>) -> Result<Info> {
+        let query = include.map(|val| format!("include={}", val));
+
         self.client.call::<String, String, Info>(
             Method::GET,
             format!("/files/{}/", file_id),
-            None,
+            query,
             None,
         )
     }
@@ -43,8 +48,8 @@ impl Service<'_> {
     /// # use ucare::file;
     ///
     /// let params = file::ListParams{
-    ///     removed: Some(false),
-    ///     stored: None,
+    ///     removed: Some(file::Filter::False),
+    ///     stored: Some(file::Filter::All),
     ///     limit: Some(10),
     ///     ordering: Some(file::Ordering::DatetimeUploaded),
     ///     from: None,
@@ -326,13 +331,14 @@ pub struct AppDataEntry {
 
 /// Holds all possible params for for the list method
 pub struct ListParams {
-    /// Is set to true if only include removed files in the response,
-    /// otherwise existing files are included. Defaults to false.
-    pub removed: Option<bool>,
-    /// Is set to true if only include files that were stored.
-    /// Set to false to include only temporary files.
-    /// The default is unset: both stored and not stored files are returned
-    pub stored: Option<bool>,
+    /// Set to `Filter::True` to only include removed files in the response,
+    /// `Filter::False` to only include existing ones and `Filter::All` to include
+    /// both. Defaults to `Filter::False`.
+    pub removed: Option<Filter>,
+    /// Set to `Filter::True` to only include files that were stored,
+    /// `Filter::False` to only include temporary ones and `Filter::All` to include
+    /// both. The default is unset, which is the same as `Filter::All`.
+    pub stored: Option<Filter>,
     /// Specifies preferred amount of files in a list for a single
     /// response. Defaults to 100, while the maximum is 1000
     pub limit: Option<i32>,
@@ -344,6 +350,35 @@ pub struct ListParams {
     pub from: Option<String>,
     /// Additional fields to be included into every returned file.
     pub include: Option<Include>,
+}
+
+/// A three valued filter for the list method.
+///
+/// `All` was added in APIv0.7, before that the parameters were plain booleans.
+/// Note that `removed: All` combined with `stored: All` is a valid request, while
+/// `removed: True` combined with `stored: True` returns an empty result — that is
+/// expected, not an error.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[non_exhaustive]
+pub enum Filter {
+    /// "true"
+    True,
+    /// "false"
+    False,
+    /// "all"
+    All,
+}
+
+impl Display for Filter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let val = match *self {
+            Filter::True => "true",
+            Filter::False => "false",
+            Filter::All => "all",
+        };
+
+        write!(f, "{}", val)
+    }
 }
 
 /// Specifies the way files are sorted in a returned list.
@@ -401,7 +436,7 @@ impl IntoUrlQuery for ListParams {
         if let Some(val) = self.removed {
             q.push_str(val.to_string().as_str());
         } else {
-            q.push_str("false");
+            q.push_str(Filter::False.to_string().as_str());
         }
         q.push('&');
 
@@ -454,8 +489,22 @@ pub struct List {
     /// A total number of objects of the queried type. For files, the queried type depends on
     /// the stored and removed query parameters.
     pub total: Option<i32>,
+    /// Number of files in the project broken down by their storage state,
+    /// regardless of the query parameters.
+    pub totals: Option<Totals>,
     /// Number of objects per page.
     pub per_page: Option<i32>,
+}
+
+/// A breakdown of the project files by their storage state
+#[derive(Debug, Eq, PartialEq, Deserialize)]
+pub struct Totals {
+    /// Number of files marked as removed.
+    pub removed: Option<i32>,
+    /// Number of files in the storage.
+    pub stored: Option<i32>,
+    /// Number of uploaded but not stored files.
+    pub unstored: Option<i32>,
 }
 
 /// MUST be either true or false
@@ -764,8 +813,8 @@ mod tests {
     #[test]
     fn list_params_query_full() {
         let params = ListParams {
-            removed: Some(true),
-            stored: Some(true),
+            removed: Some(Filter::True),
+            stored: Some(Filter::True),
             limit: Some(10),
             ordering: Some(Ordering::DatetimeUploadedNeg),
             from: Some("2026-08-04T10:00:00Z".to_string()),
@@ -776,6 +825,46 @@ mod tests {
             params.into_query(),
             "removed=true&stored=true&limit=10&ordering=-datetime_uploaded\
              &from=2026-08-04T10:00:00Z&include=appdata",
+        );
+    }
+
+    #[test]
+    fn list_params_query_all_filter() {
+        let params = ListParams {
+            removed: Some(Filter::All),
+            stored: Some(Filter::All),
+            limit: None,
+            ordering: None,
+            from: None,
+            include: None,
+        };
+
+        assert_eq!(
+            params.into_query(),
+            "removed=all&stored=all&limit=100&ordering=datetime_uploaded",
+        );
+    }
+
+    #[test]
+    fn list_deserializes_totals() {
+        let json = r#"{
+            "next": null,
+            "previous": null,
+            "total": 3,
+            "totals": {"removed": 1, "stored": 2, "unstored": 0},
+            "per_page": 100,
+            "results": []
+        }"#;
+        let list: List = serde_json::from_str(json).unwrap();
+
+        assert_eq!(list.total, Some(3));
+        assert_eq!(
+            list.totals,
+            Some(Totals {
+                removed: Some(1),
+                stored: Some(2),
+                unstored: Some(0),
+            }),
         );
     }
 }
