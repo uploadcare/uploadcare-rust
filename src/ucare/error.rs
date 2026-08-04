@@ -99,12 +99,17 @@ pub enum ErrValue {
     Forbidden(String),
     /// Not found error
     NotFound(String),
+    /// Method is not supported by the endpoint
+    MethodNotAllowed(String),
     /// Invalid version header `Accept` for the endpoint
     NotAcceptable(String),
     /// Payload too large
     PayloadTooLarge(String),
     /// Request was throttled
     TooManyRequests(i32),
+    /// API responded with a 5xx status. Holds the status code and the response
+    /// body, which is not necessarily a json payload.
+    ServerError(u16, String),
 
     /// Errors returned from reqwest underlying lib
     Reqwest(reqwest::Error),
@@ -128,6 +133,7 @@ impl fmt::Display for ErrValue {
             ErrValue::Unauthorized(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::Forbidden(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::NotFound(ref msg) => write!(f, "{}: {}", prefix, msg),
+            ErrValue::MethodNotAllowed(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::NotAcceptable(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::PayloadTooLarge(ref msg) => write!(f, "{}: {}", prefix, msg),
             ErrValue::TooManyRequests(ref retry_after) => write!(
@@ -135,6 +141,9 @@ impl fmt::Display for ErrValue {
                 "{}: too many requests, retry after {}",
                 prefix, retry_after
             ),
+            ErrValue::ServerError(status, ref msg) => {
+                write!(f, "{}: server error {}: {}", prefix, status, msg)
+            }
 
             ErrValue::Reqwest(ref err) => write!(f, "{}: {}", prefix, err),
             ErrValue::InputOutput(ref err) => write!(f, "{}: {}", prefix, err),
