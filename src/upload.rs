@@ -21,7 +21,7 @@ use std::fmt::{self, Debug, Display};
 use reqwest::{blocking::multipart::Form, Method, Url};
 use serde::Deserialize;
 
-use crate::file::{ImageInfo, VideoInfo};
+use crate::types::ImageInfo;
 use crate::ucare::{upload::Client, upload::Fields, upload::Payload, Result};
 
 /// Service is used to make calls to file API.
@@ -337,6 +337,53 @@ pub struct FileInfo {
     pub s3_bucket: Option<String>,
     /// CDN media transformations applied to the file when its group was created
     pub default_effects: Option<String>,
+}
+
+/// Video related information as returned by the Upload API.
+///
+/// Not to be confused with [`crate::file::VideoInfo`]: the Upload API is versioned
+/// separately from the REST API and keeps the pre-v0.7 shape, where `audio` and
+/// `video` are single objects rather than lists of streams.
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct VideoInfo {
+    /// Video duration in milliseconds.
+    pub duration: Option<f32>,
+    /// Video format (MP4 for example).
+    pub format: Option<String>,
+    /// Video bitrate.
+    pub bitrate: Option<f32>,
+    /// Audio information
+    pub audio: Option<VideoInfoAudio>,
+    /// Video stream info
+    pub video: Option<VideoInfoVideo>,
+}
+
+/// Information about the audio in video
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct VideoInfoAudio {
+    /// Audio stream metadata.
+    pub bitrate: Option<f32>,
+    /// Audio stream codec.
+    pub codec: Option<String>,
+    /// Audio stream sample rate.
+    pub sample_rate: Option<f32>,
+    /// Audio stream number of channels.
+    pub channels: Option<String>,
+}
+
+/// Video stream info
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct VideoInfoVideo {
+    /// Video stream image height.
+    pub height: Option<f32>,
+    /// Video stream image width.
+    pub width: Option<f32>,
+    /// Video stream frame rate.
+    pub frame_rate: Option<f32>,
+    /// Video stream bitrate.
+    pub bitrate: Option<f32>,
+    /// Video stream codec.
+    pub codec: Option<String>,
 }
 
 /// Group information

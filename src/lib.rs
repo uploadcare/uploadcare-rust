@@ -35,8 +35,9 @@
 //!     removed: Some(true),
 //!     stored: Some(true),
 //!     limit: Some(10),
-//!     ordering: Some(file::Ordering::Size),
+//!     ordering: Some(file::Ordering::DatetimeUploaded),
 //!     from: None,
+//!     include: None,
 //! };
 //! let list = file_svc.list(list_params).unwrap();
 //!
@@ -80,5 +81,7 @@ pub mod webhook;
 
 #[cfg(feature = "upload")]
 pub mod upload;
+
+pub mod types;
 
 pub use crate::ucare::{ApiCreds, ErrValue, Error, Result};
