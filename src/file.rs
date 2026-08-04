@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
 
 use reqwest::{Method, Url};
-use serde::{self, Deserialize, Serialize};
+use serde::{self, ser::SerializeMap, Deserialize, Serialize, Serializer};
 use serde_json;
 
 use crate::types::ImageInfo;
@@ -82,6 +82,49 @@ impl Service<'_> {
     pub fn get_page(&self, url: &str) -> Result<List> {
         let url = Url::parse(url)?;
         self.client.call_url::<String, List>(Method::GET, url, None)
+    }
+
+    /// Searches for the project files. Available since APIv0.7 only.
+    ///
+    /// At least one of the [`SearchQuery`] criteria has to be set, otherwise the API
+    /// answers `400`. The same goes for the rest of the constraints documented on
+    /// [`SearchQuery`] and [`SearchParams`] — they are checked server side and
+    /// reported back as `ErrValue::BadRequest`, the library does not duplicate the
+    /// validation to avoid being stricter than the service.
+    ///
+    /// ```rust,ignore
+    /// # use ucare::file;
+    ///
+    /// let params = file::SearchParams {
+    ///     query: file::SearchQuery {
+    ///         query: Some("invoice".to_string()),
+    ///         is_image: Some(file::IsImage::False),
+    ///         ..Default::default()
+    ///     },
+    ///     limit: Some(50),
+    ///     offset: None,
+    ///     include: None,
+    /// };
+    /// let found = file_svc.search(params)?;
+    ///
+    /// for f in found.results.unwrap().iter() {
+    ///     println!("{}: {:?}", f.info.uuid, f.highlight.original_filename);
+    /// }
+    /// ```
+    ///
+    /// Note that the search index lags behind the actual state by tens of seconds:
+    /// a freshly uploaded file may not be found yet, and a freshly deleted one may
+    /// still be listed.
+    pub fn search(&self, params: SearchParams) -> Result<SearchList> {
+        let query = params.pagination_query();
+        let json = encode_json(&params.query)?;
+
+        self.client.call::<String, Vec<u8>, SearchList>(
+            Method::POST,
+            "/files/search/".to_string(),
+            query,
+            Some(json),
+        )
     }
 
     /// Store a single file by its id
@@ -388,6 +431,7 @@ impl Display for Filter {
 /// based pagination when a whole page holds files of the same size. Any unsupported
 /// value now makes the API answer `400` instead of silently falling back to the
 /// default, so keeping this an enum is what keeps such a request from being made.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[non_exhaustive]
 pub enum Ordering {
     /// "datetime_uploaded"
@@ -410,6 +454,7 @@ impl Display for Ordering {
 /// Additional fields to be included into the response.
 ///
 /// Replaces the `add_fields=rekognition_info` parameter of APIv0.6.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[non_exhaustive]
 pub enum Include {
     /// Include `appdata` into every returned file.
@@ -505,6 +550,308 @@ pub struct Totals {
     pub stored: Option<i32>,
     /// Number of uploaded but not stored files.
     pub unstored: Option<i32>,
+}
+
+/// Holds all possible params for the search method
+///
+/// The `query` goes into the request body, the rest of the fields into the query
+/// string.
+#[derive(Debug, Default)]
+pub struct SearchParams {
+    /// What to search for.
+    pub query: SearchQuery,
+    /// Preferred amount of files in a single response, 1 to 100.
+    /// Defaults to 20 on the API side.
+    pub limit: Option<i32>,
+    /// Number of files to skip. Defaults to 0.
+    ///
+    /// `offset + limit` MUST NOT exceed 1000, otherwise the API answers `400`. This
+    /// is a hard cap on the result depth: walking the whole project through the
+    /// search is not possible, use [`Service::list`] for that.
+    pub offset: Option<i32>,
+    /// Additional fields to be included into every found file.
+    pub include: Option<Include>,
+}
+
+impl SearchParams {
+    /// Builds the query string part of the search request, `None` when there is
+    /// nothing to put into it.
+    fn pagination_query(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(val) = self.limit {
+            parts.push(format!("limit={}", val));
+        }
+        if let Some(val) = self.offset {
+            parts.push(format!("offset={}", val));
+        }
+        if let Some(ref val) = self.include {
+            parts.push(format!("include={}", val));
+        }
+
+        if parts.is_empty() {
+            return None;
+        }
+        Some(parts.join("&"))
+    }
+}
+
+/// Search criteria. At least one of the fields MUST be set.
+#[derive(Debug, Default, Serialize)]
+pub struct SearchQuery {
+    /// Full text search over several fields at once. At least 4 characters long.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    /// Substring search in specific fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phrase: Option<Phrase>,
+    /// Exact match search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exact: Option<Exact>,
+    /// Upload time range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub datetime_uploaded: Option<DateRange>,
+    /// File size range, in bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<SizeRange>,
+    /// Whether the file is a recognized image.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_image: Option<IsImage>,
+    /// File tags to match.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<TagsFilter>,
+    /// Allow for typos in the full text search. Defaults to false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuzziness: Option<bool>,
+    /// Result ordering, up to 4 entries.
+    ///
+    /// Duplicates and opposite directions of the same field (`Size` together with
+    /// `SizeNeg`) are rejected with a `400`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort: Option<Vec<Sort>>,
+}
+
+/// Substring search in specific fields.
+///
+/// Every value has to be at least 4 characters long. A field MUST NOT be used in
+/// both [`Phrase`] and [`Exact`] within one query, that is a `400`.
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Phrase {
+    /// Search in the detected MIME type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detected_mime_type: Option<String>,
+    /// Search in the file metadata values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<String>,
+    /// Search in the original file name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_filename: Option<String>,
+}
+
+/// Exact match search. Every set field has to hold a non empty list of values.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Exact {
+    /// Match any of the given UUIDs.
+    pub uuid: Option<Vec<String>>,
+    /// Match any of the given detected MIME types.
+    pub detected_mime_type: Option<Vec<String>>,
+    /// Match any of the given original file names.
+    pub original_filename: Option<Vec<String>>,
+    /// Match file metadata: `metadata key -> any of the given values`.
+    ///
+    /// Serialized as `metadata[key]` entries next to the fields above. Keys are
+    /// limited to 64 characters and values to 512, same as the file metadata itself.
+    pub metadata: HashMap<String, Vec<String>>,
+}
+
+impl Serialize for Exact {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // the `metadata[key]` keys cannot be expressed with a derive, hence the
+        // hand written map
+        let mut len = self.metadata.len();
+        for field in [
+            &self.uuid,
+            &self.detected_mime_type,
+            &self.original_filename,
+        ]
+        .iter()
+        {
+            if field.is_some() {
+                len += 1;
+            }
+        }
+
+        let mut map = serializer.serialize_map(Some(len))?;
+        if let Some(ref val) = self.uuid {
+            map.serialize_entry("uuid", val)?;
+        }
+        if let Some(ref val) = self.detected_mime_type {
+            map.serialize_entry("detected_mime_type", val)?;
+        }
+        if let Some(ref val) = self.original_filename {
+            map.serialize_entry("original_filename", val)?;
+        }
+        for (key, val) in self.metadata.iter() {
+            map.serialize_entry(format!("metadata[{}]", key).as_str(), val)?;
+        }
+        map.end()
+    }
+}
+
+/// A date range. At least one of the bounds MUST be set.
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+pub struct DateRange {
+    /// Greater than.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gt: Option<String>,
+    /// Greater than or equal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gte: Option<String>,
+    /// Less than.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lt: Option<String>,
+    /// Less than or equal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lte: Option<String>,
+}
+
+/// A file size range in bytes. At least one of the bounds MUST be set.
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+pub struct SizeRange {
+    /// Greater than.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gt: Option<i64>,
+    /// Greater than or equal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gte: Option<i64>,
+    /// Less than.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lt: Option<i64>,
+    /// Less than or equal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lte: Option<i64>,
+}
+
+/// Tag based search criteria. At least one of the fields MUST be set.
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+pub struct TagsFilter {
+    /// File has at least one of these tags.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub any: Option<Vec<String>>,
+    /// File has all of these tags.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all: Option<Vec<String>>,
+    /// File has none of these tags.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub none: Option<Vec<String>>,
+}
+
+/// Value of the `is_image` search criterion.
+///
+/// Mirrors the three states of [`Info::is_image`]. Serialized as a real json
+/// boolean or `null`: the API rejects the strings `"true"` and `"false"` with
+/// a `400`.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum IsImage {
+    /// A recognized image.
+    True,
+    /// Definitely not an image.
+    False,
+    /// Recognition has not finished yet.
+    Unknown,
+}
+
+impl Serialize for IsImage {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match *self {
+            IsImage::True => serializer.serialize_bool(true),
+            IsImage::False => serializer.serialize_bool(false),
+            IsImage::Unknown => serializer.serialize_none(),
+        }
+    }
+}
+
+/// Specifies the way found files are sorted.
+///
+/// Sorting by size is available here, unlike in [`Ordering`] for the file list:
+/// the limitation there comes from cursor based pagination, which the search
+/// does not use.
+#[non_exhaustive]
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
+pub enum Sort {
+    /// "score"
+    #[serde(rename = "score")]
+    Score,
+    /// "-score"
+    #[serde(rename = "-score")]
+    ScoreNeg,
+    /// "size"
+    #[serde(rename = "size")]
+    Size,
+    /// "-size"
+    #[serde(rename = "-size")]
+    SizeNeg,
+    /// "datetime_uploaded"
+    #[serde(rename = "datetime_uploaded")]
+    DatetimeUploaded,
+    /// "-datetime_uploaded"
+    #[serde(rename = "-datetime_uploaded")]
+    DatetimeUploadedNeg,
+    /// "original_filename"
+    #[serde(rename = "original_filename")]
+    OriginalFilename,
+    /// "-original_filename"
+    #[serde(rename = "-original_filename")]
+    OriginalFilenameNeg,
+}
+
+/// Holds the search results
+#[derive(Debug, Deserialize)]
+pub struct SearchList {
+    /// Actual results
+    pub results: Option<Vec<SearchResult>>,
+    /// Next page URL, `None` when the end of the results is reached.
+    pub next: Option<String>,
+    /// Previous page URL, `None` when the offset is 0.
+    pub previous: Option<String>,
+    /// A total number of matched files.
+    ///
+    /// Approximate: the search index lags behind, and recently removed files are
+    /// filtered out of the results with `total` adjusted accordingly. Do not build
+    /// invariants like "there are exactly `ceil(total / limit)` pages" on it.
+    pub total: Option<i32>,
+    /// Number of objects per page.
+    pub per_page: Option<i32>,
+}
+
+/// A single search result: a file plus the matched fragments
+#[derive(Debug, Deserialize)]
+pub struct SearchResult {
+    /// The file itself.
+    #[serde(flatten)]
+    pub info: Info,
+    /// Fragments of the matched values. Always present, but may be empty.
+    #[serde(default)]
+    pub highlight: Highlight,
+}
+
+/// Fragments of the values a file was matched by
+#[derive(Debug, Default, Deserialize)]
+pub struct Highlight {
+    /// Matched fragments of the original file name.
+    #[serde(default)]
+    pub original_filename: Vec<String>,
+    /// Matched fragments of the detected MIME type.
+    #[serde(default)]
+    pub detected_mime_type: Vec<String>,
+    /// Matched metadata: `metadata key -> value fragment`.
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
 }
 
 /// MUST be either true or false
@@ -843,6 +1190,166 @@ mod tests {
             params.into_query(),
             "removed=all&stored=all&limit=100&ordering=datetime_uploaded",
         );
+    }
+
+    #[test]
+    fn search_query_serializes_only_what_is_set() {
+        let query = SearchQuery {
+            query: Some("invoice".to_string()),
+            sort: Some(vec![Sort::ScoreNeg, Sort::SizeNeg]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(&query).unwrap(),
+            serde_json::json!({"query": "invoice", "sort": ["-score", "-size"]}),
+        );
+    }
+
+    #[test]
+    fn search_query_is_image_serializes_as_json_boolean() {
+        // strings "true"/"false" are rejected by the API with a 400
+        let as_value = |val: IsImage| {
+            serde_json::to_value(SearchQuery {
+                is_image: Some(val),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+
+        assert_eq!(
+            as_value(IsImage::True),
+            serde_json::json!({"is_image": true})
+        );
+        assert_eq!(
+            as_value(IsImage::False),
+            serde_json::json!({"is_image": false}),
+        );
+        assert_eq!(
+            as_value(IsImage::Unknown),
+            serde_json::json!({"is_image": null}),
+        );
+    }
+
+    #[test]
+    fn search_query_exact_serializes_metadata_keys() {
+        let mut metadata = HashMap::new();
+        metadata.insert("subsystem".to_string(), vec!["uploader".to_string()]);
+
+        let query = SearchQuery {
+            exact: Some(Exact {
+                uuid: Some(vec!["1f067f79-cbc8-4b61-9c7b-1c1e0ea6b4b6".to_string()]),
+                metadata,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(&query).unwrap(),
+            serde_json::json!({"exact": {
+                "uuid": ["1f067f79-cbc8-4b61-9c7b-1c1e0ea6b4b6"],
+                "metadata[subsystem]": ["uploader"],
+            }}),
+        );
+    }
+
+    #[test]
+    fn search_query_ranges_are_serialized() {
+        let query = SearchQuery {
+            size: Some(SizeRange {
+                gte: Some(1024),
+                lt: Some(3_221_225_472),
+                ..Default::default()
+            }),
+            datetime_uploaded: Some(DateRange {
+                gt: Some("2026-08-01T00:00:00Z".to_string()),
+                ..Default::default()
+            }),
+            tags: Some(TagsFilter {
+                any: Some(vec!["invoice".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(&query).unwrap(),
+            serde_json::json!({
+                "size": {"gte": 1024, "lt": 3221225472i64},
+                "datetime_uploaded": {"gt": "2026-08-01T00:00:00Z"},
+                "tags": {"any": ["invoice"]},
+            }),
+        );
+    }
+
+    #[test]
+    fn search_query_without_criteria_serializes_empty() {
+        // the API answers 400 for this, the library passes it through rather than
+        // duplicating the validation
+        assert_eq!(
+            serde_json::to_value(SearchQuery::default()).unwrap(),
+            serde_json::json!({}),
+        );
+    }
+
+    #[test]
+    fn search_params_pagination_query() {
+        let params = SearchParams {
+            query: SearchQuery::default(),
+            limit: Some(50),
+            offset: Some(100),
+            include: Some(Include::Appdata),
+        };
+
+        assert_eq!(
+            params.pagination_query(),
+            Some("limit=50&offset=100&include=appdata".to_string()),
+        );
+
+        // nothing to put into the query string, the API defaults apply
+        assert_eq!(SearchParams::default().pagination_query(), None);
+    }
+
+    #[test]
+    fn search_result_holds_file_and_highlight() {
+        let json = format!(
+            r#"{{"next": null, "previous": null, "total": 1, "per_page": 20,
+                 "results": [{{"highlight": {{
+                     "original_filename": ["<em>invoice</em>.pdf"],
+                     "metadata": {{"subsystem": "<em>uploader</em>"}}
+                 }}, {}}}]}}"#,
+            // the file itself is flattened into the same object
+            minimal_info().trim_start_matches('{').trim_end_matches('}'),
+        );
+        let found: SearchList = serde_json::from_str(json.as_str()).unwrap();
+
+        let results = found.results.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].info.uuid, "1f067f79-cbc8-4b61-9c7b-1c1e0ea6b4b6",);
+        assert_eq!(
+            results[0].highlight.original_filename,
+            vec!["<em>invoice</em>.pdf".to_string()],
+        );
+        assert_eq!(
+            results[0].highlight.metadata.get("subsystem"),
+            Some(&"<em>uploader</em>".to_string()),
+        );
+        // not matched by this field
+        assert!(results[0].highlight.detected_mime_type.is_empty());
+    }
+
+    #[test]
+    fn search_result_accepts_empty_highlight() {
+        let json = format!(
+            r#"{{"results": [{{"highlight": {{}}, {}}}]}}"#,
+            minimal_info().trim_start_matches('{').trim_end_matches('}'),
+        );
+        let found: SearchList = serde_json::from_str(json.as_str()).unwrap();
+
+        let results = found.results.unwrap();
+        assert!(results[0].highlight.original_filename.is_empty());
+        assert!(results[0].highlight.metadata.is_empty());
     }
 
     #[test]
