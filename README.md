@@ -51,7 +51,7 @@ let creds = ucare::apicreds {
 // creating rest client
 let config = ucare::RestConfig {
     sign_based_auth: true,
-    api_version: ucare::RestApiVersion::v06,
+    api_version: ucare::RestApiVersion::V07,
 };
 let rest_client = ucare::RestClient::new(config, creds).unwrap();
 
@@ -87,6 +87,23 @@ println!("uploaded: {:?}", file.id);
 ```
 
 In examples we’re going to use `ucarecdn.com` domain. Check your project's subdomain in the [Dashboard](https://app.uploadcare.com/projects/-/settings/#delivery).
+
+## Demo
+
+[`demo/`](./demo) is a CLI harness with one subcommand per library method, for
+trying the contracts out against a real project:
+
+```sh
+cd demo
+export UCARE_SECRET_KEY=... UCARE_PUBLIC_KEY=...
+
+cargo run -- help
+cargo run -- file list --limit 3 --stored all
+cargo run -- smoke              # every contract in one run, with a summary table
+```
+
+It prints the typed value each call returned, and `--verbose` adds the http
+request and response behind it. See [demo/README.md](./demo/README.md).
 
 ## Useful links
 
