@@ -7,13 +7,13 @@ use serde::Deserialize;
 
 use crate::ucare::{rest::Client, Result};
 
-/// Service is used to make calls to webhook API.
+/// Service is used to make calls to project API.
 pub struct Service<'a> {
     client: &'a Client,
 }
 
-/// creates an instance of the webhook service
-pub fn new_svc(client: &Client) -> Service {
+/// creates an instance of the project service
+pub fn new_svc(client: &Client) -> Service<'_> {
     Service { client }
 }
 
@@ -21,7 +21,7 @@ impl Service<'_> {
     /// Getting info about account project.
     pub fn info(&self) -> Result<Info> {
         self.client
-            .call::<String, String, Info>(Method::GET, format!("/project/"), None, None)
+            .call::<String, String, Info>(Method::GET, "/project/".to_string(), None, None)
     }
 }
 
@@ -34,6 +34,9 @@ pub struct Info {
     pub pub_key: String,
     /// Project collaborators.
     pub collaborators: Option<Vec<Collaborator>>,
+    /// Whether uploads are automatically stored (the project level auto-store
+    /// setting).
+    pub autostore_enabled: Option<bool>,
 }
 
 /// Collaborator information

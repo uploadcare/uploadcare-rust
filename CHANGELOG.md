@@ -1,5 +1,145 @@
 ## Unreleased
 
+### REST API v0.7: client core
+
+BREAKING CHANGES:
+
+* **`RestApiVersion::V05` and `V06` are gone**, the client speaks v0.7 only. The enum
+  is `#[non_exhaustive]` from now on.
+* Error handling reworked: `4xx`/`5xx` responses map to `ErrValue` variants
+  (new: `MethodNotAllowed`, `Conflict`, `ServerError`) instead of surfacing serde
+  errors; non-JSON and empty error bodies are passed through as text. A missing or
+  malformed `Retry-After` header no longer panics.
+
+IMPROVEMENTS:
+
+* Empty success bodies (`204` on the delete endpoints) are handled by the client
+  itself; the `"EOF"` substring matching is gone from `webhook::delete` and
+  `group::delete`.
+* User supplied query values (`from` cursors, add-on `request_id`) are
+  percent-encoded; unset list parameters are no longer sent, the documented API
+  defaults apply.
+* `Warning` response headers (e.g. dropped metadata keys on `local_copy`) are logged.
+* The `Date` auth header is formatted with `%Y` instead of ISO week based `%G`,
+  which produced invalid signatures around New Year.
+* The version in `X-UC-User-Agent` is taken from the crate manifest.
+
+### Files: REST API v0.7
+
+BREAKING CHANGES:
+
+* `file::Service::info` takes an `include: Option<Include>` argument (`appdata`).
+* `file::Info`: `datetime_stored`/`datetime_removed` semantics per v0.7; new
+  `content_info`, `metadata`, `tags`, `appdata` fields; `size` is `i64`;
+  the v0.6-only `source` field is gone. `content_info` types (shared with the
+  Upload API) live in `ucare::types` and are re-exported from `file`.
+* `ListParams` uses the `Filter` enum for `removed`/`stored` and `Ordering` lost
+  sorting by size (not supported by v0.7). `Filter::All` sends no parameter at all:
+  `all` is not a documented value.
+* `CopyParams`: `make_public` is a plain `Option<bool>` (the documented boolean),
+  new `metadata` field (local copy), and `local_copy`/`remote_copy` no longer
+  inject implicit `store`/`make_public` defaults — unset fields are not sent.
+  `Pattern::AutoFilename` serializes to the documented `${auto_filename}`.
+* `VideoStream::frame_rate` is `f64`: NTSC-style fractional rates (`29.97`) are
+  common and used to fail deserialization of the whole response.
+
+FEATURES:
+
+* `POST /files/search/` with typed criteria (`SearchQuery`), pagination and
+  highlights.
+* File tags endpoints: `tags`, `set_tags`, `update_tags`
+  (`GET`/`PUT`/`PATCH /files/{uuid}/tags/`).
+* File metadata endpoints: `metadata`, `metadata_value`, `set_metadata_value`,
+  `delete_metadata_value` (`GET /files/{uuid}/metadata/`,
+  `GET`/`PUT`/`DELETE /files/{uuid}/metadata/{key}/`). Keys are validated client
+  side against the documented charset before they reach the URL.
+* `BatchInfo` exposes the response `status`.
+
+### Conversion: REST API v0.7
+
+BREAKING CHANGES:
+
+* `JobInfo.thumbnails_group_id` renamed to `thumbnails_group_uuid` — the old field
+  name never matched the API and always deserialized to `None`.
+* `StatusResult.result` is `Option<JobInfo>`: a `failed` job carries no result and
+  used to make the whole status call fail to parse.
+* `JobParams` has a new `save_in_group` field (document conversion only); `store`
+  and `save_in_group` are omitted from the request when unset.
+
+FEATURES:
+
+* `document_info` (`GET /convert/document/{uuid}/`): source format, possible
+  conversions and already converted groups. The docs contradict themselves on
+  where `converted_groups` lives (top level vs nested in `format`), so both
+  placements are accepted; `DocumentInfo::any_converted_groups` picks whichever
+  is present.
+
+FIXES:
+
+* `POST /convert/video/` uses the trailing slash — without it the API redirects,
+  and a redirected POST loses its body.
+* `video_status` uses `GET` and the correct path; conversion job tokens are `i64`.
+
+### Add-Ons: new module (REST API v0.7)
+
+* `addons::Service`: `execute`, `status`, `execute_and_wait`/`wait` for
+  `uc_clamav_virus_scan`, `aws_rekognition_detect_labels`,
+  `aws_rekognition_detect_moderation_labels` and `remove_bg`, with typed
+  per-application params. A transient status poll failure does not lose the
+  `request_id` of a running job: it is reported as `Outcome::PollFailed` after
+  several consecutive failures.
+
+### Groups: REST API v0.7
+
+BREAKING CHANGES:
+
+* `group::Service::store` is gone: v0.7 removed `PUT /groups/{uuid}/storage/`
+  together with the group `datetime_stored` field.
+* `group::Info::datetime_created` is a plain `String` (documented as required).
+
+FEATURES:
+
+* `group::Service::delete` (`DELETE /groups/{uuid}/`), new in v0.7.
+* `group::Info` carries `files` (with `None` placeholders for removed files) and
+  `url` — previously the primary payload of the info endpoint was dropped.
+
+### Project
+
+* `project::Info` exposes the documented `autostore_enabled` field.
+
+### Webhooks: partial update fixes
+
+* `UpdateParams.signing_secret` is only sent when set. It used to be serialized as
+  `null` on every update, which contradicted the documented partial-update
+  semantics and risked clearing the stored secret.
+* `UpdateParams.id` is no longer serialized into the request body (it is a path
+  parameter).
+* `CreateParams` no longer sends `signing_secret: null`/`is_active: null` for
+  unset fields and no longer forces `is_active: true` client side — the API
+  default (active) applies.
+
+### Upload API: response schemas
+
+BREAKING CHANGES:
+
+* **`FromUrlData` is now tagged by the response `type` field.** The previous
+  `untagged` representation could never produce the `FileInfo` variant — a
+  `check_URL_duplicates` hit was silently mis-parsed as a token-less `Token`.
+  `FileToken.token` is a plain `String` and the `data_type` field is gone (it
+  duplicated the tag).
+* `FromUrlStatusData::Progress.total` is `Option<u64>` (documented as nullable) and
+  `FromUrlStatusData::Error` carries the documented `error_code`.
+* `VideoInfo`/`VideoInfoAudio`/`VideoInfoVideo` numeric fields are integers per the
+  documented schema (`frame_rate` stays fractional); **`channels` is `Option<i64>`**
+  — it was typed as a string and broke deserialization of any video with sound.
+* `GroupInfo.files` is `Option<Vec<Option<FileInfo>>>`: the array holds `null` for
+  removed files.
+
+FEATURES:
+
+* `upload::FileInfo` exposes `content_info` and `metadata`, so what is sent on
+  upload can also be read back from upload responses.
+
 ### Upload API: request parameters
 
 BREAKING CHANGES:

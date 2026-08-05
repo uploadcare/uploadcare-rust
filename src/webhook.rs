@@ -28,7 +28,7 @@ pub struct Service<'a> {
 }
 
 /// creates an instance of the webhook service
-pub fn new_svc(client: &Client) -> Service {
+pub fn new_svc(client: &Client) -> Service<'_> {
     Service { client }
 }
 
@@ -44,10 +44,15 @@ impl Service<'_> {
     /// nothing about the other addresses — do not cache it as a per project flag.
     pub fn list(&self) -> Result<List> {
         self.client
-            .call::<String, String, List>(Method::GET, format!("/webhooks/"), None, None)
+            .call::<String, String, List>(Method::GET, "/webhooks/".to_string(), None, None)
     }
 
     /// Returns a single webhook by its id
+    ///
+    /// Note: `GET /webhooks/{id}/` is not part of the documented contract (the
+    /// docs list exactly four webhook operations). It works, but being
+    /// undocumented it comes with no compatibility promise — when that matters,
+    /// use [`Service::list`] and filter.
     pub fn get(&self, id: i32) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::GET,
@@ -69,9 +74,6 @@ impl Service<'_> {
     /// private range addresses are rejected, so a local endpoint cannot be used for
     /// debugging — use a publicly reachable address or a tunnel.
     pub fn create(&self, mut params: CreateParams) -> Result<Info> {
-        if params.is_active.is_none() {
-            params.is_active = Some(true);
-        }
         if params.version.is_none() {
             params.version = Some(Version::V07);
         }
@@ -79,7 +81,7 @@ impl Service<'_> {
 
         self.client.call::<String, Vec<u8>, Info>(
             Method::POST,
-            format!("/webhooks/"),
+            "/webhooks/".to_string(),
             None,
             Some(json),
         )
@@ -120,19 +122,12 @@ impl Service<'_> {
         // the body has to travel with a DELETE here, which is unusual enough that
         // some http clients drop it; reqwest attaches it regardless of the method,
         // and a body-less request would be answered with `\`target_url\` is missing`
-        let res = self.client.call::<String, Vec<u8>, String>(
+        self.client.call::<String, Vec<u8>, ()>(
             Method::DELETE,
-            format!("/webhooks/unsubscribe/"),
+            "/webhooks/unsubscribe/".to_string(),
             None,
             Some(json),
-        );
-        if let Err(err) = res {
-            if !err.to_string().contains("EOF") {
-                return Err(err);
-            }
-        }
-
-        Ok(())
+        )
     }
 }
 
@@ -206,9 +201,12 @@ pub struct CreateParams {
     /// unique for each project — event type combination.
     pub target_url: String,
     /// Payload can be signed with a secret to ensure that the request comes from the expected
-    /// sender. Leave None if you don't want to change it
+    /// sender. Optional, not sent when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signing_secret: Option<String>,
-    /// Marks a subscription as either active or not, defaults to true, otherwise false.
+    /// Marks a subscription as either active or not. Not sent when `None`, the
+    /// API default is true.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_active: Option<bool>,
     /// Subscription version. Defaults to [`Version::V07`] when left None.
     ///
@@ -274,7 +272,9 @@ pub enum Event {
 /// Params for updating webhook
 #[derive(Debug, Serialize)]
 pub struct UpdateParams {
-    /// Webhook ID
+    /// Webhook ID. Identifies the subscription in the request path; not part
+    /// of the documented request body, hence never serialized into it.
+    #[serde(skip_serializing)]
     pub id: i32,
     /// An event you subscribe to. Leave None if you don't want to change it
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -285,7 +285,9 @@ pub struct UpdateParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_url: Option<String>,
     /// Payload can be signed with a secret to ensure that the request comes from the expected
-    /// sender
+    /// sender. Leave it `None` to keep the current secret: the field is only
+    /// sent when set, so an unset secret can never wipe an existing one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signing_secret: Option<String>,
     /// Marks a subscription as either active or not, leave it None if you don't want to change it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -452,9 +454,30 @@ mod tests {
         let value = serde_json::to_value(&params).unwrap();
 
         assert!(value.get("version").is_none());
+        // partial update: only the set fields travel. In particular an unset
+        // signing_secret must not be sent as null (that risks wiping the
+        // stored secret), and `id` belongs to the request path, not the body.
+        assert_eq!(value, serde_json::json!({"is_active": true}));
+    }
+
+    #[test]
+    fn create_params_omit_unset_fields() {
+        let params = CreateParams {
+            event: Event::FileUploaded,
+            target_url: "https://example.com/hook".to_string(),
+            signing_secret: None,
+            is_active: None,
+            version: Some(Version::V07),
+        };
+
+        // unset optional fields are not sent as nulls, the API defaults apply
         assert_eq!(
-            value,
-            serde_json::json!({"id": 1387, "signing_secret": null, "is_active": true}),
+            serde_json::to_value(&params).unwrap(),
+            serde_json::json!({
+                "event": "file.uploaded",
+                "target_url": "https://example.com/hook",
+                "version": "0.7",
+            }),
         );
     }
 }

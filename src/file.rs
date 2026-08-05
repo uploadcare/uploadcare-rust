@@ -13,8 +13,10 @@ use reqwest::{Method, Url};
 use serde::{self, ser::SerializeMap, Deserialize, Serialize, Serializer};
 use serde_json;
 
-use crate::types::ImageInfo;
-use crate::ucare::{encode_json, rest::Client, IntoUrlQuery, Result};
+pub use crate::types::{AudioStream, ContentInfo, MimeInfo, VideoInfo, VideoStream};
+use crate::ucare::{
+    encode_json, encode_query_value, rest::Client, ErrValue, Error, IntoUrlQuery, Result,
+};
 
 /// Service is used to make calls to file API.
 pub struct Service<'a> {
@@ -22,7 +24,7 @@ pub struct Service<'a> {
 }
 
 /// creates an instance of the file service
-pub fn new_svc(client: &Client) -> Service {
+pub fn new_svc(client: &Client) -> Service<'_> {
     Service { client }
 }
 
@@ -72,7 +74,7 @@ impl Service<'_> {
     pub fn list(&self, params: ListParams) -> Result<List> {
         self.client.call::<ListParams, String, List>(
             Method::GET,
-            format!("/files/"),
+            "/files/".to_string(),
             Some(params),
             None,
         )
@@ -98,7 +100,7 @@ impl Service<'_> {
     /// let params = file::SearchParams {
     ///     query: file::SearchQuery {
     ///         query: Some("invoice".to_string()),
-    ///         is_image: Some(file::IsImage::False),
+    ///         is_image: Some(false),
     ///         ..Default::default()
     ///     },
     ///     limit: Some(50),
@@ -143,7 +145,7 @@ impl Service<'_> {
         let json = encode_json(&file_ids)?;
         self.client.call::<String, Vec<u8>, BatchInfo>(
             Method::PUT,
-            format!("/files/storage/"),
+            "/files/storage/".to_string(),
             None,
             Some(json),
         )
@@ -165,7 +167,7 @@ impl Service<'_> {
         let json = encode_json(&file_ids)?;
         self.client.call::<String, Vec<u8>, BatchInfo>(
             Method::DELETE,
-            format!("/files/storage/"),
+            "/files/storage/".to_string(),
             None,
             Some(json),
         )
@@ -174,19 +176,16 @@ impl Service<'_> {
     /// Used to copy original files or their modified versions to
     /// default storage. Source files MAY either be stored or just uploaded and MUST
     /// NOT be deleted
-    pub fn local_copy(&self, mut params: CopyParams) -> Result<LocalCopyInfo> {
-        if let None = params.store {
-            params.store = Some(ToStore::False);
-        }
-        if let None = params.make_public {
-            params.make_public = Some(MakePublic::True);
-        }
-
+    ///
+    /// Fields of [`CopyParams`] not documented for local copy (`make_public`,
+    /// `target`, `pattern`) are left to the caller; unset fields are not sent and
+    /// the API defaults apply (`store` defaults to `false`).
+    pub fn local_copy(&self, params: CopyParams) -> Result<LocalCopyInfo> {
         let json = encode_json(&params)?;
 
         self.client.call::<String, Vec<u8>, LocalCopyInfo>(
             Method::POST,
-            format!("/files/local_copy/"),
+            "/files/local_copy/".to_string(),
             None,
             Some(json),
         )
@@ -195,19 +194,131 @@ impl Service<'_> {
     /// Used to copy original files or their modified versions to a custom
     /// storage. Source files MAY either be stored or just uploaded and MUST NOT be
     /// deleted.
-    pub fn remote_copy(&self, mut params: CopyParams) -> Result<RemoteCopyInfo> {
-        if let None = params.make_public {
-            params.make_public = Some(MakePublic::True);
-        }
-
+    pub fn remote_copy(&self, params: CopyParams) -> Result<RemoteCopyInfo> {
         let json = encode_json(&params)?;
 
         self.client.call::<String, Vec<u8>, RemoteCopyInfo>(
             Method::POST,
-            format!("/files/remote_copy/"),
+            "/files/remote_copy/".to_string(),
             None,
             Some(json),
         )
+    }
+
+    /// Returns the tags of a file: `GET /files/{uuid}/tags/`.
+    pub fn tags(&self, file_id: &str) -> Result<TagsInfo> {
+        self.client.call::<String, String, TagsInfo>(
+            Method::GET,
+            format!("/files/{}/tags/", file_id),
+            None,
+            None,
+        )
+    }
+
+    /// Replaces the whole set of file tags: `PUT /files/{uuid}/tags/`.
+    ///
+    /// Up to 16 tags per file, up to 64 characters each. The API lowercases,
+    /// trims and deduplicates the values, so [`TagsUpdate::tags`] in the response
+    /// may differ from what was sent.
+    pub fn set_tags(&self, file_id: &str, tags: &[&str]) -> Result<TagsUpdate> {
+        let json = encode_json(&serde_json::json!({ "tags": tags }))?;
+
+        self.client.call::<String, Vec<u8>, TagsUpdate>(
+            Method::PUT,
+            format!("/files/{}/tags/", file_id),
+            None,
+            Some(json),
+        )
+    }
+
+    /// Adds and/or removes individual file tags: `PATCH /files/{uuid}/tags/`.
+    ///
+    /// Unlike [`Service::set_tags`] the tags not mentioned in either list are
+    /// left as they are.
+    pub fn update_tags(&self, file_id: &str, add: &[&str], delete: &[&str]) -> Result<TagsUpdate> {
+        let json = encode_json(&serde_json::json!({ "add": add, "delete": delete }))?;
+
+        self.client.call::<String, Vec<u8>, TagsUpdate>(
+            Method::PATCH,
+            format!("/files/{}/tags/", file_id),
+            None,
+            Some(json),
+        )
+    }
+
+    /// Returns all metadata of a file: `GET /files/{uuid}/metadata/`.
+    pub fn metadata(&self, file_id: &str) -> Result<HashMap<String, String>> {
+        self.client.call::<String, String, HashMap<String, String>>(
+            Method::GET,
+            format!("/files/{}/metadata/", file_id),
+            None,
+            None,
+        )
+    }
+
+    /// Returns the value of a single metadata key:
+    /// `GET /files/{uuid}/metadata/{key}/`.
+    pub fn metadata_value(&self, file_id: &str, key: &str) -> Result<String> {
+        validate_metadata_key(key)?;
+
+        self.client.call::<String, String, String>(
+            Method::GET,
+            format!("/files/{}/metadata/{}/", file_id, key),
+            None,
+            None,
+        )
+    }
+
+    /// Creates or updates the value of a single metadata key:
+    /// `PUT /files/{uuid}/metadata/{key}/`. Returns the stored value.
+    ///
+    /// Values are limited to 512 characters, a file can hold up to 50 keys.
+    pub fn set_metadata_value(&self, file_id: &str, key: &str, value: &str) -> Result<String> {
+        validate_metadata_key(key)?;
+        // the documented request body is a bare json string
+        let json = encode_json(&value)?;
+
+        self.client.call::<String, Vec<u8>, String>(
+            Method::PUT,
+            format!("/files/{}/metadata/{}/", file_id, key),
+            None,
+            Some(json),
+        )
+    }
+
+    /// Removes a single metadata key: `DELETE /files/{uuid}/metadata/{key}/`.
+    pub fn delete_metadata_value(&self, file_id: &str, key: &str) -> Result<()> {
+        validate_metadata_key(key)?;
+
+        self.client.call::<String, String, ()>(
+            Method::DELETE,
+            format!("/files/{}/metadata/{}/", file_id, key),
+            None,
+            None,
+        )
+    }
+}
+
+/// Checks a metadata key against the documented constraints before it is put
+/// into the request path.
+///
+/// Keys are limited to 64 characters of `a-z A-Z 0-9 _ - . :`. Rejecting
+/// anything else client side both mirrors the API behavior (it ignores such
+/// keys) and keeps unencoded user input out of the URL.
+fn validate_metadata_key(key: &str) -> Result<()> {
+    let valid = !key.is_empty()
+        && key.len() <= 64
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'));
+
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::with_value(ErrValue::BadRequest(format!(
+            "invalid metadata key {:?}: up to 64 characters of a-z, A-Z, 0-9, `_-.:`",
+            key,
+        ))))
     }
 }
 
@@ -247,9 +358,6 @@ pub struct Info {
     /// Dictionary of other files that has been created using this file as source. Used for video,
     /// document and etc. conversion.
     pub variations: Option<serde_json::Value>,
-    /// File upload source. This field contains information about from where file was uploaded, for
-    /// example: facebook, gdrive, gphotos, etc.
-    pub source: Option<String>,
     /// Recognized content information: mime type, image and video metadata.
     ///
     /// Replaces `image_info` and `video_info` of APIv0.6. Is `None` for files whose
@@ -261,98 +369,19 @@ pub struct Info {
     /// hence not an `Option`.
     #[serde(default)]
     pub metadata: HashMap<String, String>,
-    /// File tags.
+    /// File tags, ordered by their first occurrence; an empty vector when the file
+    /// has no tags.
     ///
-    /// Three states to tell apart: `None` means the feature is disabled for the
-    /// project, `Some([])` means the file has no tags, and a non empty vector holds
-    /// the tags themselves. The order is significant and must not be changed: it is
-    /// the order of the first occurrence, not a sorted set.
+    /// `Option` defensively: the field is part of every documented v0.7 response,
+    /// but payloads produced elsewhere (webhook deliveries for example) may omit it.
     pub tags: Option<Vec<String>>,
     /// Results produced by applications (virus scan, object recognition and so on),
     /// keyed by the application id.
     ///
-    /// Only present when `appdata` was asked for through
-    /// [`ListParams::include`], otherwise `None`.
+    /// Only present when `appdata` was asked for through the `include` argument
+    /// of [`Service::info`], [`ListParams::include`] or [`SearchParams::include`],
+    /// otherwise `None`.
     pub appdata: Option<HashMap<String, AppDataEntry>>,
-}
-
-/// Recognized information about the file content.
-///
-/// All three of the fields are optional: a non media file has neither `image` nor
-/// `video`, and files uploaded before the field was introduced may have no `mime`
-/// (the MIME type declared on upload is always available as `Info::mime_type`).
-#[derive(Debug, Deserialize)]
-pub struct ContentInfo {
-    /// Detected MIME type.
-    pub mime: Option<MimeInfo>,
-    /// Image metadata.
-    pub image: Option<ImageInfo>,
-    /// Video metadata.
-    pub video: Option<VideoInfo>,
-}
-
-/// Detected MIME type, split into parts
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-pub struct MimeInfo {
-    /// Full MIME type, `image/jpeg` for example.
-    pub mime: Option<String>,
-    /// Type part, `image` for example.
-    #[serde(rename = "type")]
-    pub mime_type: Option<String>,
-    /// Subtype part, `jpeg` for example.
-    pub subtype: Option<String>,
-}
-
-/// Video related information
-///
-/// Note the difference from the APIv0.6 `video_info` and from
-/// [`crate::upload::VideoInfo`], which still uses the old shape: `video` and `audio`
-/// are lists of streams here, `duration` and `bitrate` are nullable, and audio
-/// channels are a number rather than a string.
-#[derive(Debug, PartialEq, Deserialize)]
-pub struct VideoInfo {
-    /// Video format (MP4 for example).
-    pub format: Option<String>,
-    /// Video duration in milliseconds.
-    pub duration: Option<i64>,
-    /// Video bitrate.
-    pub bitrate: Option<i64>,
-    /// Video streams. Empty for files without a video stream, an audio file for example.
-    #[serde(default)]
-    pub video: Vec<VideoStream>,
-    /// Audio streams. Empty when the file has no sound.
-    #[serde(default)]
-    pub audio: Vec<AudioStream>,
-}
-
-/// A single video stream of a video file
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-pub struct VideoStream {
-    /// Video stream image height.
-    pub height: Option<i64>,
-    /// Video stream image width.
-    pub width: Option<i64>,
-    /// Video stream frame rate, already rounded by the API.
-    pub frame_rate: Option<i64>,
-    /// Video stream bitrate.
-    pub bitrate: Option<i64>,
-    /// Video stream codec.
-    pub codec: Option<String>,
-}
-
-/// A single audio stream of a video file
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-pub struct AudioStream {
-    /// Audio stream number of channels.
-    pub channels: Option<i64>,
-    /// Audio stream bitrate.
-    pub bitrate: Option<i64>,
-    /// Audio stream codec.
-    pub codec: Option<String>,
-    /// Audio stream sample rate.
-    pub sample_rate: Option<i64>,
-    /// Audio stream profile.
-    pub profile: Option<String>,
 }
 
 /// Result produced by a single application for a file
@@ -397,10 +426,12 @@ pub struct ListParams {
 
 /// A three valued filter for the list method.
 ///
-/// `All` was added in APIv0.7, before that the parameters were plain booleans.
-/// Note that `removed: All` combined with `stored: All` is a valid request, while
-/// `removed: True` combined with `stored: True` returns an empty result — that is
-/// expected, not an error.
+/// The documented contract only knows the boolean values, so `All` sends no
+/// parameter at all and the API default applies. For `stored` that default is
+/// "any storage state" — exactly what `All` promises. For `removed` the
+/// documented default is `false`: there is no documented way to get existing
+/// and removed files in one listing, so `removed: Some(All)` behaves the same
+/// as leaving it unset.
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[non_exhaustive]
 pub enum Filter {
@@ -408,19 +439,18 @@ pub enum Filter {
     True,
     /// "false"
     False,
-    /// "all"
+    /// The parameter is not sent, the API default applies.
     All,
 }
 
-impl Display for Filter {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let val = match *self {
-            Filter::True => "true",
-            Filter::False => "false",
-            Filter::All => "all",
-        };
-
-        write!(f, "{}", val)
+impl Filter {
+    /// The query string value, `None` for the [`Filter::All`] no-op.
+    fn query_value(&self) -> Option<&'static str> {
+        match *self {
+            Filter::True => Some("true"),
+            Filter::False => Some("false"),
+            Filter::All => None,
+        }
     }
 }
 
@@ -476,49 +506,30 @@ impl Display for Include {
 
 impl IntoUrlQuery for ListParams {
     fn into_query(self) -> String {
-        let mut q = String::new();
-        q.push_str("removed=");
-        if let Some(val) = self.removed {
-            q.push_str(val.to_string().as_str());
-        } else {
-            q.push_str(Filter::False.to_string().as_str());
+        // unset parameters are not sent at all: the server side defaults are
+        // documented and there is no point in re-stating them client side
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(val) = self.removed.as_ref().and_then(Filter::query_value) {
+            parts.push(format!("removed={}", val));
         }
-        q.push('&');
-
-        if let Some(val) = self.stored {
-            q.push_str("stored=");
-            q.push_str(val.to_string().as_str());
-            q.push('&');
+        if let Some(val) = self.stored.as_ref().and_then(Filter::query_value) {
+            parts.push(format!("stored={}", val));
         }
-
-        q.push_str("limit=");
         if let Some(val) = self.limit {
-            q.push_str(val.to_string().as_str());
-        } else {
-            q.push_str("100");
+            parts.push(format!("limit={}", val));
         }
-        q.push('&');
-
-        q.push_str("ordering=");
         if let Some(val) = self.ordering {
-            q.push_str(val.to_string().as_str());
-        } else {
-            q.push_str(Ordering::DatetimeUploaded.to_string().as_str());
+            parts.push(format!("ordering={}", val));
         }
-
-        if let Some(val) = self.from {
-            q.push('&');
-            q.push_str("from=");
-            q.push_str(val.as_str());
+        if let Some(ref val) = self.from {
+            // an ISO 8601 cursor may hold `+`, which must not turn into a space
+            parts.push(format!("from={}", encode_query_value(val)));
         }
-
         if let Some(val) = self.include {
-            q.push('&');
-            q.push_str("include=");
-            q.push_str(val.to_string().as_str());
+            parts.push(format!("include={}", val));
         }
 
-        q
+        parts.join("&")
     }
 }
 
@@ -614,8 +625,11 @@ pub struct SearchQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<SizeRange>,
     /// Whether the file is a recognized image.
+    ///
+    /// The documented contract is strictly boolean, there is no value for
+    /// "recognition has not finished yet".
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_image: Option<IsImage>,
+    pub is_image: Option<bool>,
     /// File tags to match.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<TagsFilter>,
@@ -748,34 +762,6 @@ pub struct TagsFilter {
     pub none: Option<Vec<String>>,
 }
 
-/// Value of the `is_image` search criterion.
-///
-/// Mirrors the three states of [`Info::is_image`]. Serialized as a real json
-/// boolean or `null`: the API rejects the strings `"true"` and `"false"` with
-/// a `400`.
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum IsImage {
-    /// A recognized image.
-    True,
-    /// Definitely not an image.
-    False,
-    /// Recognition has not finished yet.
-    Unknown,
-}
-
-impl Serialize for IsImage {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match *self {
-            IsImage::True => serializer.serialize_bool(true),
-            IsImage::False => serializer.serialize_bool(false),
-            IsImage::Unknown => serializer.serialize_none(),
-        }
-    }
-}
-
 /// Specifies the way found files are sorted.
 ///
 /// Sorting by size is available here, unlike in [`Ordering`] for the file list:
@@ -816,8 +802,14 @@ pub struct SearchList {
     /// Actual results
     pub results: Option<Vec<SearchResult>>,
     /// Next page URL, `None` when the end of the results is reached.
+    ///
+    /// Informational only: search pages cannot be fetched with
+    /// [`Service::get_page`] (search is a `POST` with a body). To paginate,
+    /// call [`Service::search`] again with an increased
+    /// [`SearchParams::offset`].
     pub next: Option<String>,
-    /// Previous page URL, `None` when the offset is 0.
+    /// Previous page URL, `None` when the offset is 0. Informational only,
+    /// see `next`.
     pub previous: Option<String>,
     /// A total number of matched files.
     ///
@@ -865,18 +857,6 @@ pub enum ToStore {
     False,
 }
 
-/// MUST be either true or false. true to make copied files available via public links,
-/// false to reverse the behavior.
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
-pub enum MakePublic {
-    /// True
-    #[serde(rename = "true")]
-    True,
-    /// False
-    #[serde(rename = "false")]
-    False,
-}
-
 /// The parameter is used to specify file names Uploadcare passes to a custom storage.
 /// In case the parameter is omitted, we use pattern of your custom storage.
 /// Use any combination of allowed values.
@@ -886,7 +866,7 @@ pub enum Pattern {
     #[serde(rename = "${default}")]
     Default,
     /// AutoFilename
-    #[serde(rename = "${filename} ${effects} ${ext}")]
+    #[serde(rename = "${auto_filename}")]
     AutoFilename,
     /// Effects
     #[serde(rename = "${effects}")]
@@ -909,15 +889,22 @@ pub enum Pattern {
 pub struct CopyParams {
     /// Source is a CDN URL or just ID (UUID) of a file subjected to copy
     pub source: String,
-    /// Store parameter only applies to the Uploadcare storage and MUST
-    /// be either true or false.
+    /// Store parameter only applies to the Uploadcare storage (local copy) and
+    /// MUST be either true or false. The API default is false.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<ToStore>,
-    /// MakePublic is applicable to custom storage only. MUST be either true or
-    /// false. True to make copied files available via public links, false to
-    /// reverse the behavior.
+    /// Arbitrary metadata attached to the copy (local copy only). Same
+    /// constraints as the file metadata endpoints: up to 50 keys of 64
+    /// characters (`a-z A-Z 0-9 _ - . :`), values up to 512 characters. Invalid
+    /// keys are dropped by the API with a `Warning` response header, which the
+    /// client logs.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub make_public: Option<MakePublic>,
+    pub metadata: Option<HashMap<String, String>>,
+    /// Applicable to custom storage only (remote copy). True to make copied
+    /// files available via public links, false to reverse the behavior. The
+    /// API default is true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub make_public: Option<bool>,
     /// Target identifies a custom storage name related to your project.
     /// Implies you are copying a file to a specified custom storage. Keep in
     /// mind you can have multiple storages associated with a single S3
@@ -953,10 +940,39 @@ pub struct RemoteCopyInfo {
 /// Holds batch operation response data
 #[derive(Debug, Deserialize)]
 pub struct BatchInfo {
+    /// Overall request status, `"ok"` even when some of the files failed —
+    /// per file failures are reported through `problems`.
+    pub status: Option<String>,
     /// Map of passed files IDs and problems associated problems
     pub problems: Option<HashMap<String, String>>,
     /// Results describes successfully operated files
     pub result: Option<Vec<Info>>,
+}
+
+/// The tags of a file as returned by [`Service::tags`]
+#[derive(Debug, Deserialize)]
+pub struct TagsInfo {
+    /// The tags themselves, ordered by their first occurrence.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// The outcome of a tags modification, [`Service::set_tags`] or
+/// [`Service::update_tags`]
+///
+/// The API normalizes tag values (lowercases, trims, deduplicates), so `added`
+/// and `deleted` reflect what actually changed rather than what was sent.
+#[derive(Debug, Deserialize)]
+pub struct TagsUpdate {
+    /// The resulting set of tags.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Tags added by this request.
+    #[serde(default)]
+    pub added: Vec<String>,
+    /// Tags removed by this request.
+    #[serde(default)]
+    pub deleted: Vec<String>,
 }
 
 #[cfg(test)]
@@ -1065,10 +1081,28 @@ mod tests {
         let video = content_info.video.unwrap();
         assert_eq!(video.duration, Some(10000));
         assert_eq!(video.video.len(), 1);
-        // integer in v0.7, was a float in the v0.6 video_info
-        assert_eq!(video.video[0].frame_rate, Some(30));
+        assert_eq!(video.video[0].frame_rate, Some(30.0));
         // a number in v0.7, was a string in the v0.6 video_info
         assert_eq!(video.audio[0].channels, Some(2));
+    }
+
+    #[test]
+    fn content_info_frame_rate_may_be_fractional() {
+        // NTSC video: the schema declares frame_rate a double for a reason
+        let json = minimal_info().replace(
+            "\"content_info\": null",
+            r#""content_info": {
+                "video": {
+                    "format": "MP4",
+                    "video": [{"width": 720, "height": 480, "frame_rate": 29.97, "codec": "h264"}],
+                    "audio": []
+                }
+            }"#,
+        );
+        let info: Info = serde_json::from_str(json.as_str()).unwrap();
+
+        let video = info.content_info.unwrap().video.unwrap();
+        assert_eq!(video.video[0].frame_rate, Some(29.97));
     }
 
     #[test]
@@ -1151,10 +1185,8 @@ mod tests {
             include: None,
         };
 
-        assert_eq!(
-            params.into_query(),
-            "removed=false&limit=100&ordering=datetime_uploaded",
-        );
+        // nothing is sent, the documented server side defaults apply
+        assert_eq!(params.into_query(), "");
     }
 
     #[test]
@@ -1164,14 +1196,16 @@ mod tests {
             stored: Some(Filter::True),
             limit: Some(10),
             ordering: Some(Ordering::DatetimeUploadedNeg),
-            from: Some("2026-08-04T10:00:00Z".to_string()),
+            from: Some("2026-08-04T10:00:00+03:00".to_string()),
             include: Some(Include::Appdata),
         };
 
+        // the `+` of the timezone offset must be percent-encoded, otherwise it
+        // reaches the server as a space
         assert_eq!(
             params.into_query(),
             "removed=true&stored=true&limit=10&ordering=-datetime_uploaded\
-             &from=2026-08-04T10:00:00Z&include=appdata",
+             &from=2026-08-04T10%3A00%3A00%2B03%3A00&include=appdata",
         );
     }
 
@@ -1186,10 +1220,34 @@ mod tests {
             include: None,
         };
 
-        assert_eq!(
-            params.into_query(),
-            "removed=all&stored=all&limit=100&ordering=datetime_uploaded",
-        );
+        // `all` is not a documented parameter value: the filter is simply
+        // not sent
+        assert_eq!(params.into_query(), "");
+    }
+
+    #[test]
+    fn metadata_key_is_validated() {
+        assert!(validate_metadata_key("subsystem").is_ok());
+        assert!(validate_metadata_key("a-b.c:d_9").is_ok());
+
+        // only latin letters, digits and `_-.:` are allowed; anything else is
+        // ignored by the API, so it is rejected before it reaches the URL
+        assert!(validate_metadata_key("отдел").is_err());
+        assert!(validate_metadata_key("").is_err());
+        assert!(validate_metadata_key("a/b").is_err());
+        assert!(validate_metadata_key("x".repeat(65).as_str()).is_err());
+    }
+
+    #[test]
+    fn tags_update_deserializes() {
+        let update: TagsUpdate = serde_json::from_str(
+            r#"{"tags": ["invoice", "2026"], "added": ["2026"], "deleted": ["draft"]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(update.tags, vec!["invoice", "2026"]);
+        assert_eq!(update.added, vec!["2026"]);
+        assert_eq!(update.deleted, vec!["draft"]);
     }
 
     #[test]
@@ -1209,25 +1267,14 @@ mod tests {
     #[test]
     fn search_query_is_image_serializes_as_json_boolean() {
         // strings "true"/"false" are rejected by the API with a 400
-        let as_value = |val: IsImage| {
-            serde_json::to_value(SearchQuery {
-                is_image: Some(val),
-                ..Default::default()
-            })
-            .unwrap()
+        let query = SearchQuery {
+            is_image: Some(true),
+            ..Default::default()
         };
 
         assert_eq!(
-            as_value(IsImage::True),
-            serde_json::json!({"is_image": true})
-        );
-        assert_eq!(
-            as_value(IsImage::False),
-            serde_json::json!({"is_image": false}),
-        );
-        assert_eq!(
-            as_value(IsImage::Unknown),
-            serde_json::json!({"is_image": null}),
+            serde_json::to_value(&query).unwrap(),
+            serde_json::json!({"is_image": true}),
         );
     }
 

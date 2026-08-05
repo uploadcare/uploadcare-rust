@@ -72,12 +72,10 @@ fn from_url() {
     let data = upload_svc.from_url(params).unwrap();
     match data {
         upload::FromUrlData::Token(val) => {
-            assert_ne!(val.token, None);
+            assert!(!val.token.is_empty());
 
             // check status
-            let status_data = upload_svc
-                .from_url_status(val.token.unwrap().as_str())
-                .unwrap();
+            let status_data = upload_svc.from_url_status(val.token.as_str()).unwrap();
             println!("{:?}", status_data);
         }
         upload::FromUrlData::FileInfo(info) => {

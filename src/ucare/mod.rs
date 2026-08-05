@@ -16,6 +16,7 @@ pub mod upload;
 
 /// Version reported in the `X-UC-User-Agent` header. Taken from the crate
 /// manifest so it never drifts away from the published version.
+#[cfg(feature = "rest")]
 pub(crate) const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Holds per project API credentials.
@@ -41,6 +42,7 @@ where
     }
 }
 
+#[cfg(feature = "rest")]
 pub(crate) fn encode_json<T>(params: &T) -> Result<Vec<u8>, Error>
 where
     T: ?Sized + Serialize,
@@ -52,13 +54,26 @@ where
     }
 }
 
+/// Percent-encodes a single query parameter value.
+///
+/// `into_query` implementations concatenate `key=value` pairs by hand, so any
+/// user supplied value (an ISO 8601 cursor with `+03:00`, a request id) must be
+/// encoded here or characters like `+`, `&` and `#` change the request.
+#[cfg(feature = "rest")]
+pub(crate) fn encode_query_value(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
 pub(crate) fn encode_url<T>(base: &str, path: &str, params: Option<T>) -> Result<Url, Error>
 where
     T: IntoUrlQuery,
 {
     let mut u = base.to_string() + path;
     if let Some(data) = params {
-        u = u + "?" + data.into_query().as_str();
+        let query = data.into_query();
+        if !query.is_empty() {
+            u = u + "?" + query.as_str();
+        }
     }
 
     let url = Url::parse(u.as_str())?;

@@ -5,10 +5,7 @@
 use std::fmt;
 use std::io;
 
-use reqwest;
 use serde::Deserialize;
-use serde_json;
-use url;
 
 /// Result has Error as default value for Err value
 pub type Result<T, E = Error> = std::result::Result<T, E>;

@@ -73,7 +73,7 @@ impl Client {
         headers.insert(
             header::ACCEPT,
             header::HeaderValue::from_str(
-                format!("application/vnd.uploadcare-{}+json", &config.api_version).as_str(),
+                format!("application/vnd.uploadcare-{}+json", config.api_version).as_str(),
             )
             .unwrap(),
         );
@@ -83,7 +83,7 @@ impl Client {
             header::HeaderValue::from_str(
                 format!(
                     "{}/{}/{}",
-                    USER_AGENT_PREFIX, CLIENT_VERSION, &creds.pub_key
+                    USER_AGENT_PREFIX, CLIENT_VERSION, creds.pub_key
                 )
                 .as_str(),
             )
@@ -140,10 +140,7 @@ impl Client {
             .request(method, url)
             .header(
                 header::DATE,
-                Utc::now()
-                    .format(auth::DATE_HEADER_FORMAT)
-                    .to_string()
-                    .replace("UTC", "GMT"),
+                Utc::now().format(auth::DATE_HEADER_FORMAT).to_string(),
             )
             .header(
                 header::CONTENT_TYPE,
@@ -191,11 +188,14 @@ impl Client {
                 error_detail(res, "payload too large"),
             ))),
             StatusCode::TOO_MANY_REQUESTS => {
-                let retry_after = res.headers()[header::RETRY_AFTER]
-                    .to_str()
-                    .unwrap()
-                    .parse::<i32>()
-                    .unwrap();
+                // the header is expected here, but a missing or malformed one
+                // is not worth a panic
+                let retry_after = res
+                    .headers()
+                    .get(header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<i32>().ok())
+                    .unwrap_or(0);
                 Err(Error::with_value(ErrValue::TooManyRequests(retry_after)))
             }
             status if status.is_server_error() => Err(Error::with_value(ErrValue::ServerError(
@@ -203,8 +203,16 @@ impl Client {
                 error_detail(res, status.canonical_reason().unwrap_or("server error")),
             ))),
             status if status.is_success() => {
-                let resp_data = res.json()?;
-                Ok(resp_data)
+                // 204 responses (delete endpoints) and other empty bodies are
+                // deserialized from JSON `null`, so `serde_json::Value` and
+                // `Option<T>` targets succeed instead of hitting a serde EOF
+                let body = res.text()?;
+                let body = body.trim();
+                if body.is_empty() {
+                    Ok(serde_json::from_str("null")?)
+                } else {
+                    Ok(serde_json::from_str(body)?)
+                }
             }
             // redirects and anything else we do not know about: reporting the
             // status instead of feeding the body to the deserializer

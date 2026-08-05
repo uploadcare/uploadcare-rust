@@ -79,7 +79,7 @@ pub fn sign_based(creds: ApiCreds) -> impl Fn(&mut Request) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, NaiveDateTime, Utc};
+    use chrono::DateTime;
     use reqwest::{blocking::Request, Method, Url};
 
     fn setup_req() -> Request {
@@ -117,10 +117,10 @@ mod tests {
         let mut req = setup_req();
         let headers = req.headers_mut();
 
-        let now = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1541423681, 0), Utc)
+        let now = DateTime::from_timestamp(1541423681, 0)
+            .unwrap()
             .format(DATE_HEADER_FORMAT)
-            .to_string()
-            .replace("UTC", "GMT");
+            .to_string();
 
         headers.insert("Date", now.parse().unwrap());
         headers.insert("Content-Type", "application/json".parse().unwrap());

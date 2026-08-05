@@ -25,12 +25,14 @@ use std::time::{Duration, Instant};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::ucare::{encode_json, rest::Client, Result};
+use crate::ucare::{encode_json, encode_query_value, rest::Client, Error, Result};
 
 /// Delay before the first status poll.
 const FIRST_POLL_DELAY: Duration = Duration::from_secs(1);
 /// Upper bound for the status poll interval.
 const MAX_POLL_DELAY: Duration = Duration::from_secs(5);
+/// Consecutive status poll failures tolerated before [`Outcome::PollFailed`].
+const MAX_POLL_FAILURES: u32 = 3;
 
 /// Service is used to make calls to the Add-Ons API.
 pub struct Service<'a> {
@@ -38,7 +40,7 @@ pub struct Service<'a> {
 }
 
 /// creates an instance of the addons service
-pub fn new_svc(client: &Client) -> Service {
+pub fn new_svc(client: &Client) -> Service<'_> {
     Service { client }
 }
 
@@ -54,14 +56,14 @@ impl Service<'_> {
     ///
     /// - `ErrValue::Conflict` — the same application is already processing this file.
     ///   Treat it as "already running", not as "retry in a second": if the previous
-    ///   run died without updating its status, the pair stays locked for up to 24
-    ///   hours.
+    ///   run died without updating its status, the pair can stay locked until that
+    ///   state expires (observed to take up to a day; not documented).
     /// - `ErrValue::Forbidden` — the application is disabled for the project.
     ///   Permissions are per application, so this says nothing about the others.
     /// - `ErrValue::NotFound` — unknown `application_id`, or the file is not in the
     ///   project. The two are indistinguishable by status code.
-    /// - `ErrValue::TooManyRequests` — the launch rate limit, 10 to 600 per minute
-    ///   depending on the project plan. Polling is not affected by it.
+    /// - `ErrValue::TooManyRequests` — the launch rate limit, which depends on the
+    ///   project plan.
     ///
     /// Calls are not idempotent: every successful one starts a new job with a new
     /// `request_id`, and for `remove_bg` that means another new file. Do not blindly
@@ -86,7 +88,9 @@ impl Service<'_> {
         self.client.call::<String, String, StatusInfo>(
             Method::GET,
             format!("/addons/{}/execute/status/", application_id),
-            Some(format!("request_id={}", request_id)),
+            // request_id is caller supplied: encoded so that a stray `&` or `#`
+            // cannot rewrite the request
+            Some(format!("request_id={}", encode_query_value(request_id))),
             None,
         )
     }
@@ -121,6 +125,9 @@ impl Service<'_> {
     ///     addons::Outcome::Error { details, .. } => println!("failed: {:?}", details),
     ///     addons::Outcome::Unknown { .. } => println!("state expired or never existed"),
     ///     addons::Outcome::Timeout { request_id } => println!("still running: {}", request_id),
+    ///     addons::Outcome::PollFailed { request_id, error } => {
+    ///         println!("cannot poll {}: {}", request_id, error)
+    ///     }
     /// }
     /// ```
     pub fn execute_and_wait(
@@ -144,6 +151,7 @@ impl Service<'_> {
     ) -> Result<Outcome> {
         let started = Instant::now();
         let mut delay = FIRST_POLL_DELAY;
+        let mut poll_failures = 0;
 
         loop {
             // sleeping before the first poll on purpose: the job has just been
@@ -156,7 +164,26 @@ impl Service<'_> {
             }
             thread::sleep(min(delay, left));
 
-            let info = self.status(application_id, request_id)?;
+            // a transient poll failure (network blip, 5xx) must not lose the
+            // request_id of a running, non idempotent job: tolerate a few in a
+            // row and report the last one through Outcome, keeping the id
+            let info = match self.status(application_id, request_id) {
+                Ok(info) => {
+                    poll_failures = 0;
+                    info
+                }
+                Err(error) => {
+                    poll_failures += 1;
+                    if poll_failures >= MAX_POLL_FAILURES {
+                        return Ok(Outcome::PollFailed {
+                            request_id: request_id.to_string(),
+                            error,
+                        });
+                    }
+                    delay = min(delay * 3 / 2, MAX_POLL_DELAY);
+                    continue;
+                }
+            };
             match info.status {
                 Status::Done => {
                     return Ok(Outcome::Done {
@@ -243,8 +270,8 @@ pub struct StatusInfo {
     pub result: Option<serde_json::Value>,
     /// Machine readable failure description.
     ///
-    /// Present only for [`Status::Error`] and only when the failure has one, so
-    /// `None` here is not an error either.
+    /// Not part of the documented status responses, but observed alongside
+    /// [`Status::Error`] for some applications. `None` is the norm.
     pub details: Option<Details>,
 }
 
@@ -261,10 +288,11 @@ pub enum Status {
     /// Finished unsuccessfully.
     #[serde(rename = "error")]
     Error,
-    /// The API knows nothing about this `request_id`: it never existed, or the state
-    /// is older than the 24 hours it is kept for. The two are indistinguishable, so
-    /// after a previously seen [`Status::InProgress`] this almost certainly means
-    /// expiry rather than a bad `request_id`.
+    /// The API knows nothing about this `request_id`: it never existed, or the
+    /// state has expired (kept for a limited time, observed to be about a day).
+    /// The two are indistinguishable, so after a previously seen
+    /// [`Status::InProgress`] this almost certainly means expiry rather than a
+    /// bad `request_id`.
     #[serde(rename = "unknown")]
     Unknown,
 }
@@ -307,6 +335,16 @@ pub enum Outcome {
         /// Identifier of the execution.
         request_id: String,
     },
+    /// Several consecutive status polls failed before the execution settled.
+    /// The job itself is not affected; polling can be resumed with
+    /// [`Service::wait`] — that is why the `request_id` is carried here rather
+    /// than lost inside an `Err`.
+    PollFailed {
+        /// Identifier of the execution.
+        request_id: String,
+        /// The error the last poll attempt failed with.
+        error: Error,
+    },
 }
 
 /// Params of the `uc_clamav_virus_scan` application
@@ -343,10 +381,6 @@ pub struct RemoveBgParams {
     /// Scale of the subject relative to the total image size, `50%` for example.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scale: Option<String>,
-    /// Background color as hex without the leading hash: 3, 4, 6 or 8 characters.
-    /// The 4 and 8 character forms carry transparency.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bg_color: Option<String>,
     /// Whether to add an artificial shadow. Not supported for every subject type.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub add_shadow: Option<bool>,
@@ -443,7 +477,6 @@ mod tests {
             &RemoveBgParams {
                 crop: Some(true),
                 foreground_type: Some(ForegroundType::Person),
-                bg_color: Some("81d4fa".to_string()),
                 ..Default::default()
             },
         )
@@ -453,7 +486,7 @@ mod tests {
             serde_json::to_value(&params).unwrap(),
             serde_json::json!({
                 "target": "1bac376c-aa7e-4356-861b-dd2657b5bfd1",
-                "params": {"crop": true, "type": "person", "bg_color": "81d4fa"},
+                "params": {"crop": true, "type": "person"},
             }),
         );
     }
