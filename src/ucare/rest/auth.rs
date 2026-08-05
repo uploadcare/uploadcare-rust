@@ -10,7 +10,7 @@ use crate::ucare::ApiCreds;
 const AUTH_HEADER_KEY: &str = "Authorization";
 const SIMPLE_AUTH_SCHEME: &str = "Uploadcare.Simple";
 const SIGN_BASED_AUTH_SCHEME: &str = "Uploadcare";
-pub const DATE_HEADER_FORMAT: &str = "%a, %d %h %G %T %Z";
+pub const DATE_HEADER_FORMAT: &str = "%a, %d %b %Y %T GMT";
 
 pub fn simple(creds: ApiCreds) -> impl Fn(&mut Request) {
     move |req: &mut Request| {
@@ -19,7 +19,7 @@ pub fn simple(creds: ApiCreds) -> impl Fn(&mut Request) {
             SIMPLE_AUTH_SCHEME, creds.pub_key, creds.secret_key
         );
 
-        debug!("preparing simple auth param: {}", auth);
+        debug!("preparing simple auth param with pubkey: {}", creds.pub_key);
 
         req.headers_mut()
             .insert(AUTH_HEADER_KEY, auth.parse().unwrap());

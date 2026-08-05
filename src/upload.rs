@@ -38,17 +38,11 @@ impl Service<'_> {
     /// Uploads a file and return its unique id (uuid). Comply with the RFC7578 standard.
     /// Resulting HashMap holds filenames as keys and their ids are values.
     pub fn file(&self, params: FileParams) -> Result<HashMap<String, String>> {
-        let mut form = Form::new()
-            .file(params.name.to_string(), params.path.to_string())?
-            .text(
-                "UPLOADCARE_STORE",
-                if let Some(val) = params.to_store {
-                    val
-                } else {
-                    ToStore::False
-                }
-                .to_string(),
-            );
+        let mut form = Form::new().file(params.name.to_string(), params.path.to_string())?;
+        if let Some(val) = params.to_store {
+            form = form.text("UPLOADCARE_STORE", val.to_string());
+        }
+        form = add_metadata_tags(form, params.metadata, params.tags);
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, HashMap<String, String>>(
@@ -61,15 +55,10 @@ impl Service<'_> {
 
     /// Uploads file by its public URL.
     pub fn from_url(&self, params: FromUrlParams) -> Result<FromUrlData> {
-        let mut form = Form::new().text("source_url", params.source_url).text(
-            "store",
-            if let Some(val) = params.to_store {
-                val
-            } else {
-                ToStore::False
-            }
-            .to_string(),
-        );
+        let mut form = Form::new().text("source_url", params.source_url);
+        if let Some(val) = params.to_store {
+            form = form.text("store", val.to_string());
+        }
         if let Some(val) = params.filename {
             form = form.text("filename", val);
         }
@@ -79,6 +68,8 @@ impl Service<'_> {
         if let Some(val) = params.save_url_duplicates {
             form = form.text("save_URL_duplicates", val.to_string());
         }
+        // this endpoint takes metadata but no tags
+        form = add_metadata_tags(form, params.metadata, None);
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, FromUrlData>(
@@ -162,17 +153,15 @@ impl Service<'_> {
     pub fn multipart_start(&self, params: MultipartParams) -> Result<MultipartData> {
         let mut form = Form::new()
             .text("filename", params.filename)
-            .text(
-                "UPLOADCARE_STORE",
-                if let Some(val) = params.to_store {
-                    val
-                } else {
-                    ToStore::False
-                }
-                .to_string(),
-            )
             .text("content_type", params.content_type)
             .text("size", params.size.to_string());
+        if let Some(val) = params.to_store {
+            form = form.text("UPLOADCARE_STORE", val.to_string());
+        }
+        if let Some(val) = params.part_size {
+            form = form.text("part_size", val.to_string());
+        }
+        form = add_metadata_tags(form, params.metadata, params.tags);
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, MultipartData>(
@@ -218,15 +207,30 @@ pub struct FileParams {
     pub path: String,
     /// Uploaded file name
     pub name: String,
-    /// File storing behaviour.
+    /// File storing behaviour. Left to the API default when None.
     pub to_store: Option<ToStore>,
+    /// Arbitrary metadata to attach to the file, sent as `metadata[key]` fields.
+    ///
+    /// Keys are limited to 64 characters and values to non empty strings of up to
+    /// 512, same as the file metadata of the REST API. Values are strings only:
+    /// numbers, booleans and nested objects cannot be stored.
+    pub metadata: HashMap<String, String>,
+    /// Tags to attach to the file.
+    ///
+    /// Up to 50 of them, each up to 100 characters of lowercase latin letters,
+    /// digits, `-`, `_` and `.`. The API lowercases, trims and deduplicates them, so
+    /// what comes back may differ from what was sent; this crate passes the values
+    /// through as they are rather than normalizing locally.
+    ///
+    /// An empty vector is treated the same as `None` and sends no field at all.
+    pub tags: Option<Vec<String>>,
 }
 
 /// Parameters for upload from public URL link
 pub struct FromUrlParams {
     /// File URL, which should be a public HTTP or HTTPS link
     pub source_url: String,
-    /// File storing behaviour.
+    /// File storing behaviour. Left to the API default when None.
     pub to_store: Option<ToStore>,
     /// The name for a file uploaded from URL. If not defined, the filename is obtained from
     /// either response headers or a source URL
@@ -237,6 +241,11 @@ pub struct FromUrlParams {
     /// `source_url` will be used more than once. If you don’t explicitly defined, it is by
     /// default set to the value of `check_url_duplicates`.
     pub save_url_duplicates: Option<UrlDuplicates>,
+    /// Arbitrary metadata to attach to the file, sent as `metadata[key]` fields.
+    /// See [`FileParams::metadata`].
+    ///
+    /// Unlike the direct and the multipart upload, this endpoint takes no tags.
+    pub metadata: HashMap<String, String>,
 }
 
 /// Holds data returned by `from_url`
@@ -279,9 +288,9 @@ pub enum FromUrlStatusData {
     #[serde(rename = "progress")]
     Progress {
         /// Currently uploaded file size in bytes
-        done: u32,
+        done: u64,
         /// Total file size in bytes
-        total: u32,
+        total: u64,
     },
     /// File upload error
     #[serde(rename = "error")]
@@ -309,13 +318,13 @@ pub struct FileInfo {
     /// True if file is stored
     pub is_stored: bool,
     /// Denotes currently uploaded file size in bytes
-    pub done: u32,
+    pub done: u64,
     /// Same as uuid
     pub file_id: String,
     /// Total is same as size
-    pub total: u32,
+    pub total: u64,
     /// File size in bytes
-    pub size: u32,
+    pub size: u64,
     /// File UUID
     pub uuid: String,
     /// If file is an image
@@ -412,11 +421,25 @@ pub struct MultipartParams {
     /// Original file name
     pub filename: String,
     /// Precise file size in bytes. Should not exceed your project file size cap.
-    pub size: u32,
+    pub size: u64,
     /// A file MIME-type
     pub content_type: String,
-    /// File storing behaviour.
+    /// File storing behaviour. Left to the API default when None.
     pub to_store: Option<ToStore>,
+    /// Expected size of a single part in bytes.
+    ///
+    /// Left to the API default of 5242880 (5 MiB) when None. Worth raising for files
+    /// over a gigabyte, otherwise the part count — and with it the number of
+    /// presigned urls in the response — grows into the thousands.
+    ///
+    /// Whatever is chosen here decides how [`Service::upload_part`] has to slice the
+    /// file: every part but the last one MUST be exactly this size.
+    pub part_size: Option<u64>,
+    /// Arbitrary metadata to attach to the file, sent as `metadata[key]` fields.
+    /// See [`FileParams::metadata`].
+    pub metadata: HashMap<String, String>,
+    /// Tags to attach to the file. See [`FileParams::tags`].
+    pub tags: Option<Vec<String>>,
 }
 
 /// Response for starting multipart upload
@@ -457,6 +480,11 @@ impl Display for UploadStatus {
 }
 
 /// Sets the file storing behaviour
+///
+/// Leaving the parameter unset on the params structs sends no field at all, which
+/// lets the API apply its own default. That default is `Auto` for projects registered
+/// after February 12, 2024 and `False` for the older ones, so it is worth being
+/// explicit whenever the behaviour matters.
 pub enum ToStore {
     /// True
     True,
@@ -503,6 +531,40 @@ impl Display for UrlDuplicates {
     }
 }
 
+/// Adds the file metadata and tags fields to an upload form.
+///
+/// Shared by the direct and the multipart upload, both of which accept them in
+/// exactly the same shape.
+fn add_metadata_tags(
+    mut form: Form,
+    metadata: HashMap<String, String>,
+    tags: Option<Vec<String>>,
+) -> Form {
+    for (key, value) in metadata {
+        form = form.text(metadata_field(key.as_str()), value);
+    }
+    if let Some(value) = encode_tags(tags) {
+        form = form.text("tags", value);
+    }
+
+    form
+}
+
+/// Builds the form field name for a metadata key.
+fn metadata_field(key: &str) -> String {
+    format!("metadata[{}]", key)
+}
+
+/// Encodes tags the way the API expects them: one comma separated field rather than
+/// a repeated one. `None` when there is nothing to send.
+fn encode_tags(tags: Option<Vec<String>>) -> Option<String> {
+    match tags {
+        None => None,
+        Some(tags) if tags.is_empty() => None,
+        Some(tags) => Some(tags.join(",")),
+    }
+}
+
 fn add_signature_expire(auth_fields: &Fields, form: Form) -> Form {
     let form = form
         .text("UPLOADCARE_PUB_KEY", auth_fields.pub_key.to_string())
@@ -515,4 +577,61 @@ fn add_signature_expire(auth_fields: &Fields, form: Form) -> Form {
         auth_fields.signature.as_ref().unwrap().to_string(),
     )
     .text("expire", auth_fields.expire.as_ref().unwrap().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_field_names() {
+        assert_eq!(metadata_field("subsystem"), "metadata[subsystem]");
+        // any unicode letter is a valid key character, the brackets are all we add
+        assert_eq!(metadata_field("отдел"), "metadata[отдел]");
+    }
+
+    #[test]
+    fn tags_are_comma_separated() {
+        assert_eq!(
+            encode_tags(Some(vec!["invoice".to_string(), "2026".to_string()])),
+            Some("invoice,2026".to_string()),
+        );
+        assert_eq!(
+            encode_tags(Some(vec!["invoice".to_string()])),
+            Some("invoice".to_string()),
+        );
+    }
+
+    #[test]
+    fn tags_send_no_field_when_there_is_nothing_to_send() {
+        assert_eq!(encode_tags(None), None);
+        assert_eq!(encode_tags(Some(vec![])), None);
+    }
+
+    #[test]
+    fn tags_are_passed_through_unnormalized() {
+        // the API lowercases, trims and deduplicates; doing it here too would only
+        // make the crate disagree with the service on the details
+        assert_eq!(
+            encode_tags(Some(vec!["Invoice".to_string(), "invoice".to_string()])),
+            Some("Invoice,invoice".to_string()),
+        );
+    }
+
+    #[test]
+    fn file_params_default_carries_no_metadata_or_tags() {
+        let params = FileParams::default();
+
+        assert!(params.metadata.is_empty());
+        assert_eq!(params.tags, None);
+    }
+
+    #[test]
+    fn multipart_params_default_leaves_part_size_to_the_api() {
+        let params = MultipartParams::default();
+
+        assert_eq!(params.part_size, None);
+        assert!(params.metadata.is_empty());
+        assert_eq!(params.tags, None);
+    }
 }

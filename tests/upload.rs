@@ -1,4 +1,5 @@
 use rand::Rng;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 
@@ -25,10 +26,15 @@ fn file_and_group() {
     let filename =
         "London_is_the_capital_of_great_britain_".to_string() + suff.to_string().as_str();
 
+    let mut metadata = HashMap::new();
+    metadata.insert("subsystem".to_string(), "integration-test".to_string());
+
     let params = upload::FileParams {
         path: "./tests/test_image.jpg".to_string(),
         name: filename.to_string(),
         to_store: Some(upload::ToStore::True),
+        metadata,
+        tags: Some(vec!["integration".to_string(), "rust".to_string()]),
     };
     let short_file_info = upload_svc.file(params).unwrap();
 
@@ -61,6 +67,7 @@ fn from_url() {
         filename: Some("Great_London".to_string()),
         check_url_duplicates: None,
         save_url_duplicates: None,
+        metadata: HashMap::new(),
     };
     let data = upload_svc.from_url(params).unwrap();
     match data {
@@ -94,6 +101,10 @@ fn multipart() {
         size: 10_905_778,
         content_type: "image/jpeg".to_string(),
         to_store: None,
+        // the local chunker below cuts at 5 MiB, which is what the API defaults to
+        part_size: None,
+        metadata: HashMap::new(),
+        tags: None,
     };
     let multipart_data = upload_svc.multipart_start(params).unwrap();
 
