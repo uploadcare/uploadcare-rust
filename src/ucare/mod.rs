@@ -3,7 +3,7 @@
 use std::fmt::Debug;
 
 use reqwest::Url;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 mod error;
 pub use error::{ErrValue, Error, Result};
@@ -62,6 +62,41 @@ where
 #[cfg(feature = "rest")]
 pub(crate) fn encode_query_value(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+/// Deserializes an optional integer that the API may send either as a json
+/// number or as a string holding one.
+///
+/// The media metadata is where this happens: the documented schema types the
+/// audio channel count as an integer, the service answers with `"2"`. Accepting
+/// both is the only option that does not make a real response fail to parse —
+/// the alternative was a `String` field, which then broke for every response
+/// that does follow the schema.
+///
+/// `Option` alone does not make the field optional here: `deserialize_with`
+/// takes over the whole field, so a `#[serde(default)]` is required next to it
+/// for a missing key to come out as `None`.
+pub(crate) fn de_int_or_string<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum IntOrString {
+        Int(i64),
+        Str(String),
+    }
+
+    match Option::<IntOrString>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(IntOrString::Int(value)) => Ok(Some(value)),
+        Some(IntOrString::Str(raw)) => raw.parse::<i64>().map(Some).map_err(|_| {
+            serde::de::Error::invalid_value(
+                serde::de::Unexpected::Str(&raw),
+                &"an integer, or a string holding one",
+            )
+        }),
+    }
 }
 
 pub(crate) fn encode_url<T>(base: &str, path: &str, params: Option<T>) -> Result<Url, Error>

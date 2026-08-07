@@ -38,9 +38,8 @@ pub struct MimeInfo {
 /// Video related information
 ///
 /// Note the difference from the APIv0.6 `video_info` (`upload::VideoInfo`),
-/// which uses the old shape: `video` and `audio` are lists of streams here,
-/// `duration` and `bitrate` are nullable, and audio channels are a number
-/// rather than a string.
+/// which uses the old shape: `video` and `audio` are lists of streams here, and
+/// `duration` and `bitrate` are nullable.
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct VideoInfo {
     /// Video format (MP4 for example).
@@ -79,6 +78,11 @@ pub struct VideoStream {
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct AudioStream {
     /// Audio stream number of channels.
+    ///
+    /// Same caveat as [`crate::upload::VideoInfoAudio::channels`]: the schema
+    /// documents an integer, a string (`"2"`) is what actually arrives. Both
+    /// parse.
+    #[serde(default, deserialize_with = "crate::ucare::de_int_or_string")]
     pub channels: Option<i64>,
     /// Audio stream bitrate.
     pub bitrate: Option<i64>,
@@ -155,4 +159,50 @@ pub enum ColorMode {
     HSV,
     /// LAB
     LAB,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_stream_channels_accept_both_wire_forms() {
+        // the schema documents an integer, the service sends a string; a
+        // response carrying either has to parse
+        let number: AudioStream =
+            serde_json::from_str(r#"{"channels": 2, "codec": "aac"}"#).unwrap();
+        assert_eq!(number.channels, Some(2));
+
+        let string: AudioStream =
+            serde_json::from_str(r#"{"channels": "2", "codec": "aac"}"#).unwrap();
+        assert_eq!(string.channels, Some(2));
+    }
+
+    #[test]
+    fn audio_stream_channels_may_be_absent() {
+        let stream: AudioStream = serde_json::from_str(r#"{"codec": "aac"}"#).unwrap();
+
+        assert_eq!(stream.channels, None);
+    }
+
+    #[test]
+    fn content_info_video_parses_a_stream_list() {
+        let info: ContentInfo = serde_json::from_str(
+            r#"{
+                "mime": {"mime": "video/mp4", "type": "video", "subtype": "mp4"},
+                "video": {
+                    "format": "mp4",
+                    "duration": 22990,
+                    "bitrate": 8000,
+                    "video": [{"height": 1920, "width": 1080, "frame_rate": 30.0, "codec": "h264"}],
+                    "audio": [{"channels": "2", "codec": "aac", "sample_rate": 44100}]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let video = info.video.unwrap();
+        assert_eq!(video.video.len(), 1);
+        assert_eq!(video.audio[0].channels, Some(2));
+    }
 }

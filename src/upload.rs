@@ -385,7 +385,8 @@ pub struct VideoInfoAudio {
     pub codec: Option<String>,
     /// Audio stream sample rate.
     pub sample_rate: Option<i64>,
-    /// Audio stream number of channels, an integer per the documented schema.
+    /// Audio stream number of channels.
+    #[serde(default, deserialize_with = "crate::ucare::de_int_or_string")]
     pub channels: Option<i64>,
 }
 
@@ -671,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn video_info_audio_channels_is_a_number() {
+    fn video_info_parses_the_documented_shape() {
         let info: VideoInfo = serde_json::from_str(
             r#"{
                 "duration": 10000,
@@ -685,6 +686,44 @@ mod tests {
 
         assert_eq!(info.audio.unwrap().channels, Some(2));
         assert_eq!(info.video.unwrap().frame_rate, Some(29.97));
+    }
+
+    #[test]
+    fn video_info_audio_channels_may_be_a_string() {
+        // what a real multipart_complete answers with: the schema says integer,
+        // the service sends a string
+        let info: VideoInfo = serde_json::from_str(
+            r#"{
+                "duration": 10000,
+                "format": "MP4",
+                "bitrate": 1000,
+                "audio": {"bitrate": 128, "codec": "aac", "sample_rate": 44100, "channels": "2"}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.audio.unwrap().channels, Some(2));
+    }
+
+    #[test]
+    fn video_info_audio_channels_may_be_absent_or_null() {
+        let absent: VideoInfoAudio = serde_json::from_str(r#"{"codec": "aac"}"#).unwrap();
+        assert_eq!(absent.channels, None);
+
+        let null: VideoInfoAudio =
+            serde_json::from_str(r#"{"codec": "aac", "channels": null}"#).unwrap();
+        assert_eq!(null.channels, None);
+    }
+
+    #[test]
+    fn video_info_audio_channels_rejects_a_non_numeric_string() {
+        let err = serde_json::from_str::<VideoInfoAudio>(r#"{"channels": "stereo"}"#).unwrap_err();
+
+        assert!(
+            err.to_string().contains("stereo"),
+            "the offending value should be in the message, got {}",
+            err,
+        );
     }
 
     #[test]
