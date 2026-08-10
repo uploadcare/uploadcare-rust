@@ -22,7 +22,7 @@ use reqwest::{blocking::multipart::Form, Method, Url};
 use serde::Deserialize;
 
 use crate::types::ImageInfo;
-use crate::ucare::{upload::Client, upload::Fields, upload::Payload, Result};
+use crate::ucare::{upload::Client, upload::Fields, upload::Payload, ErrValue, Error, Result};
 
 /// Service is used to make calls to file API.
 pub struct Service<'a> {
@@ -42,7 +42,7 @@ impl Service<'_> {
         if let Some(val) = params.to_store {
             form = form.text("UPLOADCARE_STORE", val.to_string());
         }
-        form = add_metadata_tags(form, params.metadata, params.tags);
+        form = add_metadata_tags(form, params.metadata, params.tags)?;
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, HashMap<String, String>>(
@@ -69,7 +69,7 @@ impl Service<'_> {
             form = form.text("save_URL_duplicates", val.to_string());
         }
         // this endpoint takes metadata but no tags
-        form = add_metadata_tags(form, params.metadata, None);
+        form = add_metadata_tags(form, params.metadata, None)?;
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, FromUrlData>(
@@ -161,7 +161,7 @@ impl Service<'_> {
         if let Some(val) = params.part_size {
             form = form.text("part_size", val.to_string());
         }
-        form = add_metadata_tags(form, params.metadata, params.tags);
+        form = add_metadata_tags(form, params.metadata, params.tags)?;
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, MultipartData>(
@@ -353,7 +353,11 @@ pub struct FileInfo {
     /// Recognized content information, same shape as in the REST API v0.7.
     pub content_info: Option<crate::types::ContentInfo>,
     /// Arbitrary user defined `key -> value` pairs attached to the file.
-    #[serde(default)]
+    ///
+    /// An empty map both when the field is missing and when it is an explicit
+    /// `null` — the latter is what webhook deliveries carry, and this struct is
+    /// close enough to their payload to be reused for one.
+    #[serde(default, deserialize_with = "crate::ucare::de_null_as_default")]
     pub metadata: HashMap<String, String>,
 }
 
@@ -365,10 +369,16 @@ pub struct FileInfo {
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct VideoInfo {
     /// Video duration in milliseconds.
+    ///
+    /// Documented as an integer, but the value is ffprobe derived and a
+    /// fractional one has been observed, so both parse; see
+    /// [`crate::ucare::de_lenient_int`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub duration: Option<i64>,
     /// Video format (MP4 for example).
     pub format: Option<String>,
-    /// Video bitrate.
+    /// Video bitrate. Same leniency as `duration`.
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub bitrate: Option<i64>,
     /// Audio information
     pub audio: Option<VideoInfoAudio>,
@@ -379,14 +389,15 @@ pub struct VideoInfo {
 /// Information about the audio in video
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct VideoInfoAudio {
-    /// Audio stream metadata.
+    /// Audio stream metadata. Same leniency as [`VideoInfo::duration`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub bitrate: Option<i64>,
     /// Audio stream codec.
     pub codec: Option<String>,
     /// Audio stream sample rate.
     pub sample_rate: Option<i64>,
     /// Audio stream number of channels.
-    #[serde(default, deserialize_with = "crate::ucare::de_int_or_string")]
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub channels: Option<i64>,
 }
 
@@ -399,7 +410,8 @@ pub struct VideoInfoVideo {
     pub width: Option<i64>,
     /// Video stream frame rate. May be fractional (NTSC's `29.97`).
     pub frame_rate: Option<f64>,
-    /// Video stream bitrate.
+    /// Video stream bitrate. Same leniency as [`VideoInfo::duration`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub bitrate: Option<i64>,
     /// Video stream codec.
     pub codec: Option<String>,
@@ -550,15 +562,15 @@ fn add_metadata_tags(
     mut form: Form,
     metadata: HashMap<String, String>,
     tags: Option<Vec<String>>,
-) -> Form {
+) -> Result<Form> {
     for (key, value) in metadata {
         form = form.text(metadata_field(key.as_str()), value);
     }
-    if let Some(value) = encode_tags(tags) {
+    if let Some(value) = encode_tags(tags)? {
         form = form.text("tags", value);
     }
 
-    form
+    Ok(form)
 }
 
 /// Builds the form field name for a metadata key.
@@ -568,12 +580,27 @@ fn metadata_field(key: &str) -> String {
 
 /// Encodes tags the way the API expects them: one comma separated field rather than
 /// a repeated one. `None` when there is nothing to send.
-fn encode_tags(tags: Option<Vec<String>>) -> Option<String> {
-    match tags {
-        None => None,
-        Some(tags) if tags.is_empty() => None,
-        Some(tags) => Some(tags.join(",")),
+///
+/// A tag holding a `,` is rejected instead of being sent: the separator has no
+/// escape, so such a value would silently arrive as two tags — while the same
+/// value passed to `file::Service::set_tags` travels as a json array element and
+/// stays one. The comma is outside the documented tag charset anyway.
+fn encode_tags(tags: Option<Vec<String>>) -> Result<Option<String>> {
+    let tags = match tags {
+        None => return Ok(None),
+        Some(tags) if tags.is_empty() => return Ok(None),
+        Some(tags) => tags,
+    };
+
+    if let Some(tag) = tags.iter().find(|tag| tag.contains(',')) {
+        return Err(Error::with_value(ErrValue::BadRequest(format!(
+            "invalid tag {:?}: `,` separates the tags of an upload request and \
+             is not part of the documented tag charset",
+            tag,
+        ))));
     }
+
+    Ok(Some(tags.join(",")))
 }
 
 fn add_signature_expire(auth_fields: &Fields, form: Form) -> Form {
@@ -729,19 +756,19 @@ mod tests {
     #[test]
     fn tags_are_comma_separated() {
         assert_eq!(
-            encode_tags(Some(vec!["invoice".to_string(), "2026".to_string()])),
+            encode_tags(Some(vec!["invoice".to_string(), "2026".to_string()])).unwrap(),
             Some("invoice,2026".to_string()),
         );
         assert_eq!(
-            encode_tags(Some(vec!["invoice".to_string()])),
+            encode_tags(Some(vec!["invoice".to_string()])).unwrap(),
             Some("invoice".to_string()),
         );
     }
 
     #[test]
     fn tags_send_no_field_when_there_is_nothing_to_send() {
-        assert_eq!(encode_tags(None), None);
-        assert_eq!(encode_tags(Some(vec![])), None);
+        assert_eq!(encode_tags(None).unwrap(), None);
+        assert_eq!(encode_tags(Some(vec![])).unwrap(), None);
     }
 
     #[test]
@@ -749,9 +776,51 @@ mod tests {
         // the API lowercases, trims and deduplicates; doing it here too would only
         // make the crate disagree with the service on the details
         assert_eq!(
-            encode_tags(Some(vec!["Invoice".to_string(), "invoice".to_string()])),
+            encode_tags(Some(vec!["Invoice".to_string(), "invoice".to_string()])).unwrap(),
             Some("Invoice,invoice".to_string()),
         );
+    }
+
+    #[test]
+    fn tag_holding_the_separator_is_rejected() {
+        // it would arrive as two tags instead, while the same value sent through
+        // the REST API stays a single one
+        let err = encode_tags(Some(vec!["a,b".to_string()])).unwrap_err();
+
+        assert!(
+            err.to_string().contains("a,b"),
+            "the offending tag should be in the message, got {}",
+            err,
+        );
+    }
+
+    #[test]
+    fn video_info_numbers_may_be_fractional() {
+        // the schema documents integers, ffprobe derived values are not always
+        // whole; a single one of them must not fail the whole response
+        let info: VideoInfo = serde_json::from_str(
+            r#"{"duration": 22990.5, "format": "MP4", "bitrate": 1000.4,
+                "audio": {"bitrate": 128.5, "codec": "aac"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.duration, Some(22991));
+        assert_eq!(info.bitrate, Some(1000));
+        assert_eq!(info.audio.unwrap().bitrate, Some(129));
+    }
+
+    #[test]
+    fn file_info_metadata_may_be_null() {
+        // what a webhook delivery carries; REST v0.7 always sends an object
+        let info: FileInfo = serde_json::from_str(
+            r#"{"is_stored": true, "done": 1, "file_id": "x", "total": 1, "size": 1,
+                "uuid": "x", "is_image": false, "filename": "a.txt", "is_ready": true,
+                "original_filename": "a.txt", "mime_type": "text/plain",
+                "metadata": null}"#,
+        )
+        .unwrap();
+
+        assert!(info.metadata.is_empty());
     }
 
     #[test]

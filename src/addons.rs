@@ -25,7 +25,9 @@ use std::time::{Duration, Instant};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::ucare::{encode_json, encode_query_value, rest::Client, Error, Result};
+use crate::ucare::{
+    encode_json, encode_path_segment, encode_query_value, rest::Client, Error, Result,
+};
 
 /// Delay before the first status poll.
 const FIRST_POLL_DELAY: Duration = Duration::from_secs(1);
@@ -33,6 +35,13 @@ const FIRST_POLL_DELAY: Duration = Duration::from_secs(1);
 const MAX_POLL_DELAY: Duration = Duration::from_secs(5);
 /// Consecutive status poll failures tolerated before [`Outcome::PollFailed`].
 const MAX_POLL_FAILURES: u32 = 3;
+/// Consecutive `unknown` statuses tolerated before [`Outcome::Unknown`].
+///
+/// The status of a just accepted job is eventually consistent: the first poll,
+/// a second after `execute` returned, can answer `unknown` for a job that is
+/// very much alive. Reporting that right away invites a re-run of a job that is
+/// not idempotent, so a few of them in a row are required.
+const MAX_UNKNOWN_POLLS: u32 = 3;
 
 /// Service is used to make calls to the Add-Ons API.
 pub struct Service<'a> {
@@ -73,7 +82,10 @@ impl Service<'_> {
 
         self.client.call::<String, Vec<u8>, Execution>(
             Method::POST,
-            format!("/addons/{}/execute/", application_id),
+            // application_id is caller supplied and typically comes from
+            // configuration: encoded so that a stray `/`, `?` or `#` cannot
+            // rewrite the request path
+            format!("/addons/{}/execute/", encode_path_segment(application_id)?),
             None,
             Some(json),
         )
@@ -87,7 +99,10 @@ impl Service<'_> {
     pub fn status(&self, application_id: &str, request_id: &str) -> Result<StatusInfo> {
         self.client.call::<String, String, StatusInfo>(
             Method::GET,
-            format!("/addons/{}/execute/status/", application_id),
+            format!(
+                "/addons/{}/execute/status/",
+                encode_path_segment(application_id)?,
+            ),
             // request_id is caller supplied: encoded so that a stray `&` or `#`
             // cannot rewrite the request
             Some(format!("request_id={}", encode_query_value(request_id))),
@@ -152,6 +167,7 @@ impl Service<'_> {
         let started = Instant::now();
         let mut delay = FIRST_POLL_DELAY;
         let mut poll_failures = 0;
+        let mut unknown_polls = 0;
 
         loop {
             // sleeping before the first poll on purpose: the job has just been
@@ -198,11 +214,15 @@ impl Service<'_> {
                     })
                 }
                 Status::Unknown => {
-                    return Ok(Outcome::Unknown {
-                        request_id: request_id.to_string(),
-                    })
+                    // not treated as terminal right away: see MAX_UNKNOWN_POLLS
+                    unknown_polls += 1;
+                    if unknown_polls >= MAX_UNKNOWN_POLLS {
+                        return Ok(Outcome::Unknown {
+                            request_id: request_id.to_string(),
+                        });
+                    }
                 }
-                Status::InProgress => (),
+                Status::InProgress => unknown_polls = 0,
             }
 
             delay = min(delay * 3 / 2, MAX_POLL_DELAY);
@@ -325,6 +345,10 @@ pub enum Outcome {
         details: Option<Details>,
     },
     /// The API knows nothing about the execution, see [`Status::Unknown`].
+    ///
+    /// Reported only after several consecutive `unknown` answers: a single one
+    /// right after the job was accepted is a normal consistency lag, not a
+    /// reason to re-run a non idempotent job.
     Unknown {
         /// Identifier of the execution.
         request_id: String,

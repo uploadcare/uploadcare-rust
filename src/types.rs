@@ -45,8 +45,14 @@ pub struct VideoInfo {
     /// Video format (MP4 for example).
     pub format: Option<String>,
     /// Video duration in milliseconds.
+    ///
+    /// Documented as an integer, but the value is ffprobe derived and a
+    /// fractional one has been observed, so both parse; see
+    /// [`crate::ucare::de_lenient_int`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub duration: Option<i64>,
-    /// Video bitrate.
+    /// Video bitrate. Same leniency as `duration`.
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub bitrate: Option<i64>,
     /// Video streams. Empty for files without a video stream, an audio file for example.
     #[serde(default)]
@@ -68,7 +74,8 @@ pub struct VideoStream {
     /// A double per the documented schema: fractional NTSC style rates
     /// (`29.97`) are common, do not assume a whole number.
     pub frame_rate: Option<f64>,
-    /// Video stream bitrate.
+    /// Video stream bitrate. Same leniency as [`VideoInfo::duration`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub bitrate: Option<i64>,
     /// Video stream codec.
     pub codec: Option<String>,
@@ -82,9 +89,10 @@ pub struct AudioStream {
     /// Same caveat as [`crate::upload::VideoInfoAudio::channels`]: the schema
     /// documents an integer, a string (`"2"`) is what actually arrives. Both
     /// parse.
-    #[serde(default, deserialize_with = "crate::ucare::de_int_or_string")]
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub channels: Option<i64>,
-    /// Audio stream bitrate.
+    /// Audio stream bitrate. Same leniency as [`VideoInfo::duration`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
     pub bitrate: Option<i64>,
     /// Audio stream codec.
     pub codec: Option<String>,

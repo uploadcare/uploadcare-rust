@@ -18,6 +18,10 @@ const USER_AGENT_PREFIX: &str = "UploadcareRust";
 const API_URL: &str = "https://api.uploadcare.com";
 /// Error response bodies longer than that are cut before being put into an `Error`.
 const MAX_ERROR_BODY_LEN: usize = 512;
+/// Reported by `ErrValue::TooManyRequests` when the `Retry-After` header of a
+/// `429` is missing or not a plain number of seconds. Same value as the Upload
+/// API client uses.
+const DEFAULT_RETRY_AFTER_SECS: i32 = 30;
 
 /// Available API versions for client to specify when making requests.
 ///
@@ -189,13 +193,16 @@ impl Client {
             ))),
             StatusCode::TOO_MANY_REQUESTS => {
                 // the header is expected here, but a missing or malformed one
-                // is not worth a panic
+                // (an HTTP-date, or a proxy that stripped it) is not worth a
+                // panic — and must not come out as 0 either, which would tell a
+                // caller sleeping for this long to retry immediately
                 let retry_after = res
                     .headers()
                     .get(header::RETRY_AFTER)
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.parse::<i32>().ok())
-                    .unwrap_or(0);
+                    .filter(|secs| *secs > 0)
+                    .unwrap_or(DEFAULT_RETRY_AFTER_SECS);
                 Err(Error::with_value(ErrValue::TooManyRequests(retry_after)))
             }
             status if status.is_server_error() => Err(Error::with_value(ErrValue::ServerError(

@@ -15,7 +15,8 @@ use serde_json;
 
 pub use crate::types::{AudioStream, ContentInfo, MimeInfo, VideoInfo, VideoStream};
 use crate::ucare::{
-    encode_json, encode_query_value, rest::Client, ErrValue, Error, IntoUrlQuery, Result,
+    encode_json, encode_query_value, is_dot_segment, rest::Client, ErrValue, Error, IntoUrlQuery,
+    Result,
 };
 
 /// Service is used to make calls to file API.
@@ -307,9 +308,15 @@ impl Service<'_> {
 /// Keys are limited to 64 characters of `a-z A-Z 0-9 _ - . :`. Rejecting
 /// anything else client side both mirrors the API behavior (it ignores such
 /// keys) and keeps unencoded user input out of the URL.
+///
+/// `.` and `..` pass that charset but are path segments with a meaning of their
+/// own: `Url::parse` normalizes `/files/{uuid}/metadata/../` down to
+/// `/files/{uuid}/`, which would turn a metadata delete into a delete of the
+/// file itself. They are rejected separately.
 fn validate_metadata_key(key: &str) -> Result<()> {
     let valid = !key.is_empty()
         && key.len() <= 64
+        && !is_dot_segment(key)
         && key
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'));
@@ -318,7 +325,8 @@ fn validate_metadata_key(key: &str) -> Result<()> {
         Ok(())
     } else {
         Err(Error::with_value(ErrValue::BadRequest(format!(
-            "invalid metadata key {:?}: up to 64 characters of a-z, A-Z, 0-9, `_-.:`",
+            "invalid metadata key {:?}: up to 64 characters of a-z, A-Z, 0-9, `_-.:`, \
+             and neither `.` nor `..`",
             key,
         ))))
     }
@@ -368,8 +376,10 @@ pub struct Info {
     /// Arbitrary user defined `key -> value` pairs attached to the file.
     ///
     /// The API always returns an object here, an empty one when there is no metadata,
-    /// hence not an `Option`.
-    #[serde(default)]
+    /// hence not an `Option`. A missing field and an explicit `null` — which webhook
+    /// deliveries are documented to carry — both come out as an empty map rather than
+    /// failing the whole response.
+    #[serde(default, deserialize_with = "crate::ucare::de_null_as_default")]
     pub metadata: HashMap<String, String>,
     /// File tags, ordered by their first occurrence; an empty vector when the file
     /// has no tags.
@@ -405,9 +415,13 @@ pub struct AppDataEntry {
 
 /// Holds all possible params for for the list method
 pub struct ListParams {
-    /// Set to `Filter::True` to only include removed files in the response,
-    /// `Filter::False` to only include existing ones and `Filter::All` to include
-    /// both. Defaults to `Filter::False`.
+    /// Set to `Filter::True` to only include removed files in the response and
+    /// `Filter::False` to only include existing ones. Unset means the documented
+    /// API default, which is `false` — existing files only.
+    ///
+    /// There is no way to get removed and existing files in one listing:
+    /// `Filter::All` sends no parameter, so it is the same as leaving this unset
+    /// and it does **not** combine the two. List them separately.
     pub removed: Option<Filter>,
     /// Set to `Filter::True` to only include files that were stored,
     /// `Filter::False` to only include temporary ones and `Filter::All` to include
@@ -1238,6 +1252,50 @@ mod tests {
         assert!(validate_metadata_key("").is_err());
         assert!(validate_metadata_key("a/b").is_err());
         assert!(validate_metadata_key("x".repeat(65).as_str()).is_err());
+    }
+
+    #[test]
+    fn metadata_key_rejects_dot_segments() {
+        // `..` is within the allowed charset, but `Url::parse` normalizes
+        // `/files/{uuid}/metadata/../` into `/files/{uuid}/`, turning a metadata
+        // delete into a delete of the file itself
+        assert!(validate_metadata_key(".").is_err());
+        assert!(validate_metadata_key("..").is_err());
+
+        // a dot inside a key is still fine
+        assert!(validate_metadata_key(".hidden").is_ok());
+        assert!(validate_metadata_key("a..b").is_ok());
+    }
+
+    #[test]
+    fn info_metadata_may_be_null() {
+        // REST v0.7 always sends an object, a webhook delivery may send null
+        let json = minimal_info().replace("\"metadata\": {}", "\"metadata\": null");
+        let info: Info = serde_json::from_str(json.as_str()).unwrap();
+
+        assert!(info.metadata.is_empty());
+    }
+
+    #[test]
+    fn content_info_video_numbers_may_be_fractional() {
+        // documented as integers, but ffprobe derived values are not always whole
+        let json = minimal_info().replace(
+            "\"content_info\": null",
+            r#""content_info": {
+                "video": {
+                    "format": "MP4",
+                    "duration": 22990.5,
+                    "bitrate": 8000.2,
+                    "video": [],
+                    "audio": []
+                }
+            }"#,
+        );
+        let info: Info = serde_json::from_str(json.as_str()).unwrap();
+
+        let video = info.content_info.unwrap().video.unwrap();
+        assert_eq!(video.duration, Some(22991));
+        assert_eq!(video.bitrate, Some(8000));
     }
 
     #[test]

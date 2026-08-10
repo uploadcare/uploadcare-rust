@@ -9,16 +9,20 @@ BREAKING CHANGES:
 * Error handling reworked: `4xx`/`5xx` responses map to `ErrValue` variants
   (new: `MethodNotAllowed`, `Conflict`, `ServerError`) instead of surfacing serde
   errors; non-JSON and empty error bodies are passed through as text. A missing or
-  malformed `Retry-After` header no longer panics.
+  malformed `Retry-After` header on a `429` no longer panics: it is reported as
+  `ErrValue::TooManyRequests(30)`, same as the Upload API client. A `0` there would
+  have told a caller sleeping for that long to retry immediately.
 
 IMPROVEMENTS:
 
 * Empty success bodies (`204` on the delete endpoints) are handled by the client
   itself; the `"EOF"` substring matching is gone from `webhook::delete` and
   `group::delete`.
-* User supplied query values (`from` cursors, add-on `request_id`) are
-  percent-encoded; unset list parameters are no longer sent, the documented API
-  defaults apply.
+* User supplied query values (`from` cursors, add-on `request_id`) and path
+  segments (add-on `application_id`) are percent-encoded, and `.`/`..` are rejected
+  outright — the url parser normalizes them, so such a value would silently change
+  the endpoint being called. Unset list parameters are no longer sent, the
+  documented API defaults apply.
 * `Warning` response headers (e.g. dropped metadata keys on `local_copy`) are logged.
 * The `Date` auth header is formatted with `%Y` instead of ISO week based `%G`,
   which produced invalid signatures around New Year.
@@ -35,7 +39,15 @@ BREAKING CHANGES:
   Upload API) live in `ucare::types` and are re-exported from `file`.
 * `ListParams` uses the `Filter` enum for `removed`/`stored` and `Ordering` lost
   sorting by size (not supported by v0.7). `Filter::All` sends no parameter at all:
-  `all` is not a documented value.
+  `all` is not a documented value. For `stored` that is the same as the API default
+  (any storage state); for `removed` it is **not** a way to list removed and
+  existing files together — the API default `removed=false` applies and only
+  existing files come back. List them separately.
+* **`limit` left as `None` no longer sends `1000`.** The parameter is omitted and
+  the documented API default of 100 applies, so a page holds 100 files instead of
+  1000. Callers that read `list.results` without following `next` now see 10x fewer
+  files, and paginating callers make 10x more requests. Pass `limit: Some(1000)` to
+  keep the old page size.
 * `CopyParams`: `make_public` is a plain `Option<bool>` (the documented boolean),
   new `metadata` field (local copy), and `local_copy`/`remote_copy` no longer
   inject implicit `store`/`make_public` defaults — unset fields are not sent.
@@ -52,8 +64,20 @@ FEATURES:
 * File metadata endpoints: `metadata`, `metadata_value`, `set_metadata_value`,
   `delete_metadata_value` (`GET /files/{uuid}/metadata/`,
   `GET`/`PUT`/`DELETE /files/{uuid}/metadata/{key}/`). Keys are validated client
-  side against the documented charset before they reach the URL.
+  side against the documented charset before they reach the URL, `.` and `..`
+  included: they pass the charset, but the url parser resolves
+  `/files/{uuid}/metadata/../` into `/files/{uuid}/`, which would turn a metadata
+  delete into a delete of the file.
 * `BatchInfo` exposes the response `status`.
+
+IMPROVEMENTS:
+
+* `Info.metadata` accepts an explicit `null` as an empty map. REST v0.7 always
+  answers with an object, but a webhook delivery does not, and the struct is close
+  enough to a delivery payload to be pointed at one.
+* `content_info` durations and bitrates are documented as integers but derived from
+  ffprobe: a fractional value is now rounded instead of failing deserialization of
+  the whole file object, the same leniency `channels` already had.
 
 ### Conversion: REST API v0.7
 
@@ -87,7 +111,10 @@ FIXES:
   `aws_rekognition_detect_moderation_labels` and `remove_bg`, with typed
   per-application params. A transient status poll failure does not lose the
   `request_id` of a running job: it is reported as `Outcome::PollFailed` after
-  several consecutive failures.
+  several consecutive failures. `Outcome::Unknown` is likewise reported only after
+  several consecutive `unknown` statuses — the status of a just accepted job is
+  eventually consistent, and a re-run is not idempotent (for `remove_bg` it means
+  another billable file).
 
 ### Groups: REST API v0.7
 
@@ -177,7 +204,13 @@ IMPROVEMENTS:
 
 * Tags are passed through as given rather than normalized locally: the API lowercases,
   trims and deduplicates them, so what comes back may differ from what was sent.
-  An empty tag vector sends no field at all, same as `None`.
+  An empty tag vector sends no field at all, same as `None`. A tag holding a `,` is
+  rejected with `ErrValue::BadRequest`: the upload form has no escape for the
+  separator, so such a value would silently arrive as two tags while the same one
+  sent through `file::Service::set_tags` stays a single tag.
+* `FileInfo.metadata` accepts an explicit `null` as an empty map, and the video
+  durations and bitrates accept a fractional value (rounded) as well as the
+  documented integer.
 
 ### Webhooks: REST API v0.7
 
