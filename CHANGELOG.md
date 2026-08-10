@@ -1,4 +1,4 @@
-## Unreleased
+## 0.4.0 (Aug 11, 2026)
 
 ### REST API v0.7: client core
 

@@ -217,9 +217,11 @@ impl Service<'_> {
 
     /// Replaces the whole set of file tags: `PUT /files/{uuid}/tags/`.
     ///
-    /// Up to 16 tags per file, up to 64 characters each. The API lowercases,
-    /// trims and deduplicates the values, so [`TagsUpdate::tags`] in the response
-    /// may differ from what was sent.
+    /// Up to 50 tags per file, each up to 100 characters of latin letters, digits,
+    /// `-`, `_` and `.`. The API normalizes the values — lowercases them, strips
+    /// whitespace, discards empty ones and drops duplicates keeping the first
+    /// occurrence — so [`TagsUpdate::tags`] in the response may differ from what
+    /// was sent, both in content and in length.
     pub fn set_tags(&self, file_id: &str, tags: &[&str]) -> Result<TagsUpdate> {
         let json = encode_json(&serde_json::json!({ "tags": tags }))?;
 
