@@ -68,8 +68,7 @@ impl Service<'_> {
         if let Some(val) = params.save_url_duplicates {
             form = form.text("save_URL_duplicates", val.to_string());
         }
-        // this endpoint takes metadata but no tags
-        form = add_metadata_tags(form, params.metadata, None)?;
+        form = add_metadata_tags(form, params.metadata, params.tags)?;
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, FromUrlData>(
@@ -224,6 +223,10 @@ pub struct FileParams {
     /// what comes back may differ from what was sent; this crate passes the values
     /// through as they are rather than normalizing locally.
     ///
+    /// A tag outside that charset is not dropped: it fails the whole upload with a
+    /// `400`. The one exception handled client side is a `,`, which is the separator
+    /// of the wire format and would otherwise split one tag into two.
+    ///
     /// An empty vector is treated the same as `None` and sends no field at all.
     pub tags: Option<Vec<String>>,
 }
@@ -246,9 +249,13 @@ pub struct FromUrlParams {
     pub save_url_duplicates: Option<UrlDuplicates>,
     /// Arbitrary metadata to attach to the file, sent as `metadata[key]` fields.
     /// See [`FileParams::metadata`].
-    ///
-    /// Unlike the direct and the multipart upload, this endpoint takes no tags.
     pub metadata: HashMap<String, String>,
+    /// Tags to attach to the file. See [`FileParams::tags`].
+    ///
+    /// Attached to the file the fetch produces, so they are only readable once the
+    /// upload has finished — through [`Service::from_url_status`], or right away in
+    /// the [`FromUrlData::FileInfo`] answer of a `check_URL_duplicates` hit.
+    pub tags: Option<Vec<String>>,
 }
 
 /// Holds data returned by `from_url`
@@ -826,6 +833,14 @@ mod tests {
     #[test]
     fn file_params_default_carries_no_metadata_or_tags() {
         let params = FileParams::default();
+
+        assert!(params.metadata.is_empty());
+        assert_eq!(params.tags, None);
+    }
+
+    #[test]
+    fn from_url_params_default_carries_no_metadata_or_tags() {
+        let params = FromUrlParams::default();
 
         assert!(params.metadata.is_empty());
         assert_eq!(params.tags, None);

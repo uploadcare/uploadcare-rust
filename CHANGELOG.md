@@ -186,14 +186,16 @@ BREAKING CHANGES:
   them, but an exhaustive struct literal has to be updated.
 * `upload::MultipartParams` has three new fields: `part_size: Option<u64>`, plus the
   same `metadata` and `tags`.
-* `upload::FromUrlParams` has a new `metadata` field. This endpoint takes metadata but
-  no tags.
+* `upload::FromUrlParams` has two new fields, `metadata: HashMap<String, String>` and
+  `tags: Option<Vec<String>>`.
 
 FEATURES:
 
 * `POST /base/`, `POST /multipart/start/` and `POST /from_url/` now send file metadata
-  as `metadata[key]` form fields. The first two also send tags, as a single comma
-  separated `tags` field.
+  as `metadata[key]` form fields and tags as a single comma separated `tags` field.
+  Tags passed to `from_url` land on the file the fetch produces, so they are readable
+  once the upload has finished — through `from_url_status`, or right away in the
+  `FromUrlData::FileInfo` answer of a `check_URL_duplicates` hit.
 * `POST /multipart/start/` accepts `part_size`. Left to the API default of 5 MiB when
   `None`; worth raising for files over a gigabyte, otherwise the number of presigned
   part urls in the response grows into the thousands. Note that whatever is passed

@@ -68,6 +68,7 @@ fn from_url() {
         check_url_duplicates: None,
         save_url_duplicates: None,
         metadata: HashMap::new(),
+        tags: Some(vec!["integration".to_string(), "rust".to_string()]),
     };
     let data = upload_svc.from_url(params).unwrap();
     match data {
