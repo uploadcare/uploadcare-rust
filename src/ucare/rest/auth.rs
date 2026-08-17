@@ -10,7 +10,7 @@ use crate::ucare::ApiCreds;
 const AUTH_HEADER_KEY: &str = "Authorization";
 const SIMPLE_AUTH_SCHEME: &str = "Uploadcare.Simple";
 const SIGN_BASED_AUTH_SCHEME: &str = "Uploadcare";
-pub const DATE_HEADER_FORMAT: &str = "%a, %d %h %G %T %Z";
+pub const DATE_HEADER_FORMAT: &str = "%a, %d %b %Y %T GMT";
 
 pub fn simple(creds: ApiCreds) -> impl Fn(&mut Request) {
     move |req: &mut Request| {
@@ -19,7 +19,7 @@ pub fn simple(creds: ApiCreds) -> impl Fn(&mut Request) {
             SIMPLE_AUTH_SCHEME, creds.pub_key, creds.secret_key
         );
 
-        debug!("preparing simple auth param: {}", auth);
+        debug!("preparing simple auth param with pubkey: {}", creds.pub_key);
 
         req.headers_mut()
             .insert(AUTH_HEADER_KEY, auth.parse().unwrap());
@@ -79,7 +79,7 @@ pub fn sign_based(creds: ApiCreds) -> impl Fn(&mut Request) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, NaiveDateTime, Utc};
+    use chrono::DateTime;
     use reqwest::{blocking::Request, Method, Url};
 
     fn setup_req() -> Request {
@@ -117,10 +117,10 @@ mod tests {
         let mut req = setup_req();
         let headers = req.headers_mut();
 
-        let now = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1541423681, 0), Utc)
+        let now = DateTime::from_timestamp(1541423681, 0)
+            .unwrap()
             .format(DATE_HEADER_FORMAT)
-            .to_string()
-            .replace("UTC", "GMT");
+            .to_string();
 
         headers.insert("Date", now.parse().unwrap());
         headers.insert("Content-Type", "application/json".parse().unwrap());

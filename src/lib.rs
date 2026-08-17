@@ -23,7 +23,7 @@
 //! };
 //! let config = ucare::RestConfig {
 //!     sign_based_auth: true,
-//!     api_version: ucare::RestApiVersion::V05,
+//!     api_version: ucare::RestApiVersion::V07,
 //! };
 //!
 //! let rest_client = ucare::RestClient::new(config, creds).unwrap();
@@ -32,17 +32,21 @@
 //!
 //! // getting a list of files
 //! let list_params = file::ListParams{
-//!     removed: Some(true),
-//!     stored: Some(true),
+//!     removed: Some(file::Filter::False),
+//!     stored: Some(file::Filter::All),
 //!     limit: Some(10),
-//!     ordering: Some(file::Ordering::Size),
+//!     ordering: Some(file::Ordering::DatetimeUploaded),
 //!     from: None,
+//!     include: None,
 //! };
 //! let list = file_svc.list(list_params).unwrap();
 //!
 //! // getting file info
 //! let file_id = &list.results.unwrap()[0].uuid;
-//! let file_info = file_svc.info(&file_id).unwrap();
+//! let file_info = file_svc.info(&file_id, None).unwrap();
+//!
+//! // the same, with the appdata field populated
+//! let file_info = file_svc.info(&file_id, Some(file::Include::Appdata)).unwrap();
 //!
 //! // store file by its id
 //! file_svc.store(&file_id).unwrap();
@@ -68,6 +72,8 @@ pub use crate::ucare::rest::{
 pub use crate::ucare::upload::{Client as UploadClient, Config as UploadConfig};
 
 #[cfg(feature = "rest")]
+pub mod addons;
+#[cfg(feature = "rest")]
 pub mod conversion;
 #[cfg(feature = "rest")]
 pub mod file;
@@ -80,5 +86,7 @@ pub mod webhook;
 
 #[cfg(feature = "upload")]
 pub mod upload;
+
+pub mod types;
 
 pub use crate::ucare::{ApiCreds, ErrValue, Error, Result};

@@ -111,6 +111,9 @@ impl Client {
             StatusCode::BAD_REQUEST => Err(Error::with_value(ErrValue::BadRequest(
                 res.text_with_charset("utf-8")?,
             ))),
+            StatusCode::UNAUTHORIZED => Err(Error::with_value(ErrValue::Unauthorized(
+                res.text_with_charset("utf-8")?,
+            ))),
             StatusCode::FORBIDDEN => Err(Error::with_value(ErrValue::Forbidden(
                 res.text_with_charset("utf-8")?,
             ))),
@@ -120,18 +123,34 @@ impl Client {
             StatusCode::PAYLOAD_TOO_LARGE => Err(Error::with_value(ErrValue::PayloadTooLarge(
                 res.text_with_charset("utf-8")?,
             ))),
-            // picking 30 seconds because retry-after is not returned from the API
-            StatusCode::TOO_MANY_REQUESTS => Err(Error::with_value(ErrValue::TooManyRequests(30))),
-            StatusCode::OK | _ => match res.json() {
-                Ok(data) => Ok(data),
-                Err(err) => {
-                    if err.to_string().contains("EOF") {
-                        Ok(R::default())
-                    } else {
-                        Err(Error::from(err))
-                    }
+            StatusCode::TOO_MANY_REQUESTS => {
+                // the Upload API usually omits Retry-After; default to 30s then
+                let retry_after = res
+                    .headers()
+                    .get(header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<i32>().ok())
+                    .unwrap_or(30);
+                Err(Error::with_value(ErrValue::TooManyRequests(retry_after)))
+            }
+            status if status.is_server_error() => Err(Error::with_value(ErrValue::ServerError(
+                status.as_u16(),
+                res.text_with_charset("utf-8")?,
+            ))),
+            status if status.is_success() => {
+                // some endpoints answer with an empty body on success
+                let body = res.text_with_charset("utf-8")?;
+                if body.trim().is_empty() {
+                    Ok(R::default())
+                } else {
+                    Ok(serde_json::from_str(body.trim())?)
                 }
-            },
+            }
+            status => Err(Error::with_value(ErrValue::Other(format!(
+                "unexpected response status {}: {}",
+                status,
+                res.text_with_charset("utf-8")?,
+            )))),
         }
     }
 }

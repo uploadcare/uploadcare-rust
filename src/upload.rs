@@ -9,11 +9,11 @@
 //! the Uploadcare API endpoints. There are two basic upload types:
 //!
 //! - Direct uploads, a regular upload mode that suits most files less than 100MB
-//! in size. You won’t be able to use this mode for larger files.
+//!   in size. You won’t be able to use this mode for larger files.
 //!
 //! - Multipart uploads, a more sophisticated upload mode supporting any files
-//! larger than 10MB and implementing accelerated uploads through
-//! a distributed network.
+//!   larger than 10MB and implementing accelerated uploads through
+//!   a distributed network.
 
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
@@ -21,8 +21,8 @@ use std::fmt::{self, Debug, Display};
 use reqwest::{blocking::multipart::Form, Method, Url};
 use serde::Deserialize;
 
-use crate::file::{ImageInfo, VideoInfo};
-use crate::ucare::{upload::Client, upload::Fields, upload::Payload, Result};
+use crate::types::ImageInfo;
+use crate::ucare::{upload::Client, upload::Fields, upload::Payload, ErrValue, Error, Result};
 
 /// Service is used to make calls to file API.
 pub struct Service<'a> {
@@ -30,7 +30,7 @@ pub struct Service<'a> {
 }
 
 /// creates new upload service instance
-pub fn new_svc(client: &Client) -> Service {
+pub fn new_svc(client: &Client) -> Service<'_> {
     Service { client }
 }
 
@@ -38,22 +38,16 @@ impl Service<'_> {
     /// Uploads a file and return its unique id (uuid). Comply with the RFC7578 standard.
     /// Resulting HashMap holds filenames as keys and their ids are values.
     pub fn file(&self, params: FileParams) -> Result<HashMap<String, String>> {
-        let mut form = Form::new()
-            .file(params.name.to_string(), params.path.to_string())?
-            .text(
-                "UPLOADCARE_STORE",
-                if let Some(val) = params.to_store {
-                    val
-                } else {
-                    ToStore::False
-                }
-                .to_string(),
-            );
+        let mut form = Form::new().file(params.name, params.path)?;
+        if let Some(val) = params.to_store {
+            form = form.text("UPLOADCARE_STORE", val.to_string());
+        }
+        form = add_metadata_tags(form, params.metadata, params.tags)?;
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, HashMap<String, String>>(
             Method::POST,
-            format!("/base/"),
+            "/base/".to_string(),
             None,
             Some(Payload::Form(form)),
         )
@@ -61,15 +55,10 @@ impl Service<'_> {
 
     /// Uploads file by its public URL.
     pub fn from_url(&self, params: FromUrlParams) -> Result<FromUrlData> {
-        let mut form = Form::new().text("source_url", params.source_url).text(
-            "store",
-            if let Some(val) = params.to_store {
-                val
-            } else {
-                ToStore::False
-            }
-            .to_string(),
-        );
+        let mut form = Form::new().text("source_url", params.source_url);
+        if let Some(val) = params.to_store {
+            form = form.text("store", val.to_string());
+        }
         if let Some(val) = params.filename {
             form = form.text("filename", val);
         }
@@ -79,11 +68,12 @@ impl Service<'_> {
         if let Some(val) = params.save_url_duplicates {
             form = form.text("save_URL_duplicates", val.to_string());
         }
+        form = add_metadata_tags(form, params.metadata, params.tags)?;
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, FromUrlData>(
             Method::POST,
-            format!("/from_url/"),
+            "/from_url/".to_string(),
             None,
             Some(Payload::Form(form)),
         )
@@ -130,7 +120,7 @@ impl Service<'_> {
 
         self.client.call::<String, GroupInfo>(
             Method::POST,
-            format!("/group/"),
+            "/group/".to_string(),
             None,
             Some(Payload::Form(form)),
         )
@@ -162,31 +152,29 @@ impl Service<'_> {
     pub fn multipart_start(&self, params: MultipartParams) -> Result<MultipartData> {
         let mut form = Form::new()
             .text("filename", params.filename)
-            .text(
-                "UPLOADCARE_STORE",
-                if let Some(val) = params.to_store {
-                    val
-                } else {
-                    ToStore::False
-                }
-                .to_string(),
-            )
             .text("content_type", params.content_type)
             .text("size", params.size.to_string());
+        if let Some(val) = params.to_store {
+            form = form.text("UPLOADCARE_STORE", val.to_string());
+        }
+        if let Some(val) = params.part_size {
+            form = form.text("part_size", val.to_string());
+        }
+        form = add_metadata_tags(form, params.metadata, params.tags)?;
         form = add_signature_expire(&(*self.client.auth_fields)(), form);
 
         self.client.call::<String, MultipartData>(
             Method::POST,
-            format!("/multipart/start/"),
+            "/multipart/start/".to_string(),
             None,
             Some(Payload::Form(form)),
         )
     }
 
     /// The second phase is about uploading file parts to the provided URLs. Each uploaded part
-    /// should be 5MB (5242880 bytes) in size except for the last one that can be smaller. You
-    /// can upload file parts in parallel provided the byte order stays unchanged. Make sure to
-    /// define Content-Type header for your data.
+    /// MUST be exactly the part size chosen at [`Service::multipart_start`] (the API default is
+    /// 5242880 bytes, see [`MultipartParams::part_size`]), except for the last one that can be
+    /// smaller. You can upload file parts in parallel provided the byte order stays unchanged.
     pub fn upload_part(&self, url: &str, data: Vec<u8>) -> Result<()> {
         self.client
             .call_url::<()>(Method::PUT, Url::parse(url)?, Some(Payload::Raw(data)))
@@ -199,7 +187,7 @@ impl Service<'_> {
 
         self.client.call::<String, FileInfo>(
             Method::POST,
-            format!("/multipart/complete/"),
+            "/multipart/complete/".to_string(),
             None,
             Some(Payload::Form(form)),
         )
@@ -218,15 +206,37 @@ pub struct FileParams {
     pub path: String,
     /// Uploaded file name
     pub name: String,
-    /// File storing behaviour.
+    /// File storing behaviour. Left to the API default when None.
     pub to_store: Option<ToStore>,
+    /// Arbitrary metadata to attach to the file, sent as `metadata[key]` fields.
+    ///
+    /// Keys are limited to 64 characters of `a-z A-Z 0-9 _ - . :` — same as the
+    /// file metadata of the REST API — and a file can hold up to 50 of them; keys
+    /// with other characters are ignored by the API. Values are non empty strings
+    /// of up to 512 characters: numbers, booleans and nested objects cannot be
+    /// stored.
+    pub metadata: HashMap<String, String>,
+    /// Tags to attach to the file.
+    ///
+    /// Up to 50 of them, each up to 100 characters of lowercase latin letters,
+    /// digits, `-`, `_` and `.`. The API lowercases, trims and deduplicates them, so
+    /// what comes back may differ from what was sent; this crate passes the values
+    /// through as they are rather than normalizing locally.
+    ///
+    /// A tag outside that charset is not dropped: it fails the whole upload with a
+    /// `400`. The one exception handled client side is a `,`, which is the separator
+    /// of the wire format and would otherwise split one tag into two.
+    ///
+    /// An empty vector is treated the same as `None` and sends no field at all.
+    pub tags: Option<Vec<String>>,
 }
 
 /// Parameters for upload from public URL link
+#[derive(Default)]
 pub struct FromUrlParams {
     /// File URL, which should be a public HTTP or HTTPS link
     pub source_url: String,
-    /// File storing behaviour.
+    /// File storing behaviour. Left to the API default when None.
     pub to_store: Option<ToStore>,
     /// The name for a file uploaded from URL. If not defined, the filename is obtained from
     /// either response headers or a source URL
@@ -237,16 +247,32 @@ pub struct FromUrlParams {
     /// `source_url` will be used more than once. If you don’t explicitly defined, it is by
     /// default set to the value of `check_url_duplicates`.
     pub save_url_duplicates: Option<UrlDuplicates>,
+    /// Arbitrary metadata to attach to the file, sent as `metadata[key]` fields.
+    /// See [`FileParams::metadata`].
+    pub metadata: HashMap<String, String>,
+    /// Tags to attach to the file. See [`FileParams::tags`].
+    ///
+    /// Attached to the file the fetch produces, so they are only readable once the
+    /// upload has finished — through [`Service::from_url_status`], or right away in
+    /// the [`FromUrlData::FileInfo`] answer of a `check_URL_duplicates` hit.
+    pub tags: Option<Vec<String>>,
 }
 
 /// Holds data returned by `from_url`
+///
+/// Discriminated by the `type` field of the response: `token` for an accepted
+/// asynchronous upload, `file_info` when `check_URL_duplicates` found the file
+/// already uploaded and answered with it right away.
+// the size difference between the variants is accepted: boxing FileInfo would
+// complicate every caller for the sake of a short lived response value
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "type")]
 pub enum FromUrlData {
-    /// Token
+    /// The upload was accepted, poll [`Service::from_url_status`] with the token.
     #[serde(rename = "token")]
     Token(FileToken),
-    /// File info
+    /// The file was already known, no new upload took place.
     #[serde(rename = "file_info")]
     FileInfo(FileInfo),
 }
@@ -260,16 +286,13 @@ impl Default for FromUrlData {
 /// Respose for the `FromUrlData::Token`
 #[derive(Debug, Deserialize, Default)]
 pub struct FileToken {
-    /// Value: "token"
-    #[serde(rename = "type")]
-    pub data_type: String,
     /// A token to identify a file for the upload status request
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
+    pub token: String,
 }
 
 /// Holds the response returned by `from_url_status`
-#[derive(Debug, Deserialize)]
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(tag = "status")]
 pub enum FromUrlStatusData {
     /// Success
@@ -279,28 +302,25 @@ pub enum FromUrlStatusData {
     #[serde(rename = "progress")]
     Progress {
         /// Currently uploaded file size in bytes
-        done: u32,
-        /// Total file size in bytes
-        total: u32,
+        done: u64,
+        /// Total file size in bytes, `None` while it is not known yet
+        total: Option<u64>,
     },
     /// File upload error
     #[serde(rename = "error")]
     Error {
         /// Error description
         error: String,
+        /// Machine readable error code, `RequestThrottledError` for example
+        error_code: Option<String>,
     },
     /// Unknown
+    #[default]
     #[serde(rename = "unknown")]
     Unknown,
     /// Waiting
     #[serde(rename = "waiting")]
     Waiting,
-}
-
-impl Default for FromUrlStatusData {
-    fn default() -> Self {
-        FromUrlStatusData::Unknown
-    }
 }
 
 /// Holds file information in the upload context
@@ -309,13 +329,13 @@ pub struct FileInfo {
     /// True if file is stored
     pub is_stored: bool,
     /// Denotes currently uploaded file size in bytes
-    pub done: u32,
+    pub done: u64,
     /// Same as uuid
     pub file_id: String,
     /// Total is same as size
-    pub total: u32,
+    pub total: u64,
     /// File size in bytes
-    pub size: u32,
+    pub size: u64,
     /// File UUID
     pub uuid: String,
     /// If file is an image
@@ -337,6 +357,71 @@ pub struct FileInfo {
     pub s3_bucket: Option<String>,
     /// CDN media transformations applied to the file when its group was created
     pub default_effects: Option<String>,
+    /// Recognized content information, same shape as in the REST API v0.7.
+    pub content_info: Option<crate::types::ContentInfo>,
+    /// Arbitrary user defined `key -> value` pairs attached to the file.
+    ///
+    /// An empty map both when the field is missing and when it is an explicit
+    /// `null` — the latter is what webhook deliveries carry, and this struct is
+    /// close enough to their payload to be reused for one.
+    #[serde(default, deserialize_with = "crate::ucare::de_null_as_default")]
+    pub metadata: HashMap<String, String>,
+}
+
+/// Video related information as returned by the Upload API.
+///
+/// Not to be confused with [`crate::file::VideoInfo`]: the Upload API is versioned
+/// separately from the REST API and keeps the pre-v0.7 shape, where `audio` and
+/// `video` are single objects rather than lists of streams.
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct VideoInfo {
+    /// Video duration in milliseconds.
+    ///
+    /// Documented as an integer, but the value is ffprobe derived and a
+    /// fractional one has been observed, so both parse; see
+    /// [`crate::ucare::de_lenient_int`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
+    pub duration: Option<i64>,
+    /// Video format (MP4 for example).
+    pub format: Option<String>,
+    /// Video bitrate. Same leniency as `duration`.
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
+    pub bitrate: Option<i64>,
+    /// Audio information
+    pub audio: Option<VideoInfoAudio>,
+    /// Video stream info
+    pub video: Option<VideoInfoVideo>,
+}
+
+/// Information about the audio in video
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct VideoInfoAudio {
+    /// Audio stream metadata. Same leniency as [`VideoInfo::duration`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
+    pub bitrate: Option<i64>,
+    /// Audio stream codec.
+    pub codec: Option<String>,
+    /// Audio stream sample rate.
+    pub sample_rate: Option<i64>,
+    /// Audio stream number of channels.
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
+    pub channels: Option<i64>,
+}
+
+/// Video stream info
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct VideoInfoVideo {
+    /// Video stream image height.
+    pub height: Option<i64>,
+    /// Video stream image width.
+    pub width: Option<i64>,
+    /// Video stream frame rate. May be fractional (NTSC's `29.97`).
+    pub frame_rate: Option<f64>,
+    /// Video stream bitrate. Same leniency as [`VideoInfo::duration`].
+    #[serde(default, deserialize_with = "crate::ucare::de_lenient_int")]
+    pub bitrate: Option<i64>,
+    /// Video stream codec.
+    pub codec: Option<String>,
 }
 
 /// Group information
@@ -351,8 +436,9 @@ pub struct GroupInfo {
     pub file_count: u32,
     /// CDN URL of the group
     pub cdn_url: String,
-    /// Files list
-    pub files: Option<Vec<FileInfo>>,
+    /// Files list. An element is `None` when the corresponding file has been
+    /// removed.
+    pub files: Option<Vec<Option<FileInfo>>>,
     /// Group API url to get this info
     pub url: String,
     /// Group ID
@@ -365,11 +451,25 @@ pub struct MultipartParams {
     /// Original file name
     pub filename: String,
     /// Precise file size in bytes. Should not exceed your project file size cap.
-    pub size: u32,
+    pub size: u64,
     /// A file MIME-type
     pub content_type: String,
-    /// File storing behaviour.
+    /// File storing behaviour. Left to the API default when None.
     pub to_store: Option<ToStore>,
+    /// Expected size of a single part in bytes.
+    ///
+    /// Left to the API default of 5242880 (5 MiB) when None. Worth raising for files
+    /// over a gigabyte, otherwise the part count — and with it the number of
+    /// presigned urls in the response — grows into the thousands.
+    ///
+    /// Whatever is chosen here decides how [`Service::upload_part`] has to slice the
+    /// file: every part but the last one MUST be exactly this size.
+    pub part_size: Option<u64>,
+    /// Arbitrary metadata to attach to the file, sent as `metadata[key]` fields.
+    /// See [`FileParams::metadata`].
+    pub metadata: HashMap<String, String>,
+    /// Tags to attach to the file. See [`FileParams::tags`].
+    pub tags: Option<Vec<String>>,
 }
 
 /// Response for starting multipart upload
@@ -410,6 +510,11 @@ impl Display for UploadStatus {
 }
 
 /// Sets the file storing behaviour
+///
+/// Leaving the parameter unset on the params structs sends no field at all, which
+/// lets the API apply its own default. That default is `Auto` for projects registered
+/// after February 12, 2024 and `False` for the older ones, so it is worth being
+/// explicit whenever the behaviour matters.
 pub enum ToStore {
     /// True
     True,
@@ -456,16 +561,297 @@ impl Display for UrlDuplicates {
     }
 }
 
+/// Adds the file metadata and tags fields to an upload form.
+///
+/// Shared by the direct and the multipart upload, both of which accept them in
+/// exactly the same shape.
+fn add_metadata_tags(
+    mut form: Form,
+    metadata: HashMap<String, String>,
+    tags: Option<Vec<String>>,
+) -> Result<Form> {
+    for (key, value) in metadata {
+        form = form.text(metadata_field(key.as_str()), value);
+    }
+    if let Some(value) = encode_tags(tags)? {
+        form = form.text("tags", value);
+    }
+
+    Ok(form)
+}
+
+/// Builds the form field name for a metadata key.
+fn metadata_field(key: &str) -> String {
+    format!("metadata[{}]", key)
+}
+
+/// Encodes tags the way the API expects them: one comma separated field rather than
+/// a repeated one. `None` when there is nothing to send.
+///
+/// A tag holding a `,` is rejected instead of being sent: the separator has no
+/// escape, so such a value would silently arrive as two tags — while the same
+/// value passed to `file::Service::set_tags` travels as a json array element and
+/// stays one. The comma is outside the documented tag charset anyway.
+fn encode_tags(tags: Option<Vec<String>>) -> Result<Option<String>> {
+    let tags = match tags {
+        None => return Ok(None),
+        Some(tags) if tags.is_empty() => return Ok(None),
+        Some(tags) => tags,
+    };
+
+    if let Some(tag) = tags.iter().find(|tag| tag.contains(',')) {
+        return Err(Error::with_value(ErrValue::BadRequest(format!(
+            "invalid tag {:?}: `,` separates the tags of an upload request and \
+             is not part of the documented tag charset",
+            tag,
+        ))));
+    }
+
+    Ok(Some(tags.join(",")))
+}
+
 fn add_signature_expire(auth_fields: &Fields, form: Form) -> Form {
+    // each endpoint documents exactly one of the two key field names
+    // (`UPLOADCARE_PUB_KEY` for base/multipart, `pub_key` for from_url/group);
+    // both are always sent and the endpoint picks its own
     let form = form
         .text("UPLOADCARE_PUB_KEY", auth_fields.pub_key.to_string())
         .text("pub_key", auth_fields.pub_key.to_string());
-    if let None = auth_fields.signature {
-        return form;
+
+    match (auth_fields.signature.as_ref(), auth_fields.expire.as_ref()) {
+        (Some(signature), Some(expire)) => form
+            .text("signature", signature.to_string())
+            .text("expire", expire.to_string()),
+        _ => form,
     }
-    form.text(
-        "signature",
-        auth_fields.signature.as_ref().unwrap().to_string(),
-    )
-    .text("expire", auth_fields.expire.as_ref().unwrap().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_field_names() {
+        // the documented key charset is a-z A-Z 0-9 `_-.:`, up to 64 characters;
+        // keys outside of it are ignored by the API. The value is passed through
+        // as given, the brackets are all we add.
+        assert_eq!(metadata_field("subsystem"), "metadata[subsystem]");
+        assert_eq!(metadata_field("a-b.c:d_9"), "metadata[a-b.c:d_9]");
+    }
+
+    #[test]
+    fn from_url_data_is_discriminated_by_type() {
+        let token: FromUrlData =
+            serde_json::from_str(r#"{"type": "token", "token": "945ebb27-1fd6-46c6"}"#).unwrap();
+        match token {
+            FromUrlData::Token(data) => assert_eq!(data.token, "945ebb27-1fd6-46c6"),
+            FromUrlData::FileInfo(_) => panic!("a token response parsed as file_info"),
+        }
+
+        // check_URL_duplicates hit: the file is returned right away
+        let info: FromUrlData = serde_json::from_str(
+            r#"{
+                "type": "file_info",
+                "uuid": "1f067f79-cbc8-4b61-9c7b-1c1e0ea6b4b6",
+                "file_id": "1f067f79-cbc8-4b61-9c7b-1c1e0ea6b4b6",
+                "is_stored": true,
+                "is_image": false,
+                "is_ready": true,
+                "done": 100,
+                "total": 100,
+                "size": 100,
+                "filename": "test.txt",
+                "original_filename": "test.txt",
+                "mime_type": "text/plain",
+                "metadata": {}
+            }"#,
+        )
+        .unwrap();
+        match info {
+            FromUrlData::FileInfo(data) => {
+                assert_eq!(data.uuid, "1f067f79-cbc8-4b61-9c7b-1c1e0ea6b4b6")
+            }
+            FromUrlData::Token(_) => panic!("a file_info response parsed as token"),
+        }
+    }
+
+    #[test]
+    fn from_url_status_progress_total_may_be_null() {
+        let status: FromUrlStatusData =
+            serde_json::from_str(r#"{"status": "progress", "done": 50, "total": null}"#).unwrap();
+
+        match status {
+            FromUrlStatusData::Progress { done, total } => {
+                assert_eq!(done, 50);
+                assert_eq!(total, None);
+            }
+            _ => panic!("expected the progress variant"),
+        }
+    }
+
+    #[test]
+    fn from_url_status_error_carries_the_code() {
+        let status: FromUrlStatusData = serde_json::from_str(
+            r#"{"status": "error", "error": "Host does not exist.", "error_code": "HostDoesNotExistError"}"#,
+        )
+        .unwrap();
+
+        match status {
+            FromUrlStatusData::Error { error, error_code } => {
+                assert_eq!(error, "Host does not exist.");
+                assert_eq!(error_code, Some("HostDoesNotExistError".to_string()));
+            }
+            _ => panic!("expected the error variant"),
+        }
+    }
+
+    #[test]
+    fn video_info_parses_the_documented_shape() {
+        let info: VideoInfo = serde_json::from_str(
+            r#"{
+                "duration": 10000,
+                "format": "MP4",
+                "bitrate": 1000,
+                "audio": {"bitrate": 128, "codec": "aac", "sample_rate": 44100, "channels": 2},
+                "video": {"height": 480, "width": 720, "frame_rate": 29.97, "bitrate": 900, "codec": "h264"}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.audio.unwrap().channels, Some(2));
+        assert_eq!(info.video.unwrap().frame_rate, Some(29.97));
+    }
+
+    #[test]
+    fn video_info_audio_channels_may_be_a_string() {
+        // what a real multipart_complete answers with: the schema says integer,
+        // the service sends a string
+        let info: VideoInfo = serde_json::from_str(
+            r#"{
+                "duration": 10000,
+                "format": "MP4",
+                "bitrate": 1000,
+                "audio": {"bitrate": 128, "codec": "aac", "sample_rate": 44100, "channels": "2"}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.audio.unwrap().channels, Some(2));
+    }
+
+    #[test]
+    fn video_info_audio_channels_may_be_absent_or_null() {
+        let absent: VideoInfoAudio = serde_json::from_str(r#"{"codec": "aac"}"#).unwrap();
+        assert_eq!(absent.channels, None);
+
+        let null: VideoInfoAudio =
+            serde_json::from_str(r#"{"codec": "aac", "channels": null}"#).unwrap();
+        assert_eq!(null.channels, None);
+    }
+
+    #[test]
+    fn video_info_audio_channels_rejects_a_non_numeric_string() {
+        let err = serde_json::from_str::<VideoInfoAudio>(r#"{"channels": "stereo"}"#).unwrap_err();
+
+        assert!(
+            err.to_string().contains("stereo"),
+            "the offending value should be in the message, got {}",
+            err,
+        );
+    }
+
+    #[test]
+    fn tags_are_comma_separated() {
+        assert_eq!(
+            encode_tags(Some(vec!["invoice".to_string(), "2026".to_string()])).unwrap(),
+            Some("invoice,2026".to_string()),
+        );
+        assert_eq!(
+            encode_tags(Some(vec!["invoice".to_string()])).unwrap(),
+            Some("invoice".to_string()),
+        );
+    }
+
+    #[test]
+    fn tags_send_no_field_when_there_is_nothing_to_send() {
+        assert_eq!(encode_tags(None).unwrap(), None);
+        assert_eq!(encode_tags(Some(vec![])).unwrap(), None);
+    }
+
+    #[test]
+    fn tags_are_passed_through_unnormalized() {
+        // the API lowercases, trims and deduplicates; doing it here too would only
+        // make the crate disagree with the service on the details
+        assert_eq!(
+            encode_tags(Some(vec!["Invoice".to_string(), "invoice".to_string()])).unwrap(),
+            Some("Invoice,invoice".to_string()),
+        );
+    }
+
+    #[test]
+    fn tag_holding_the_separator_is_rejected() {
+        // it would arrive as two tags instead, while the same value sent through
+        // the REST API stays a single one
+        let err = encode_tags(Some(vec!["a,b".to_string()])).unwrap_err();
+
+        assert!(
+            err.to_string().contains("a,b"),
+            "the offending tag should be in the message, got {}",
+            err,
+        );
+    }
+
+    #[test]
+    fn video_info_numbers_may_be_fractional() {
+        // the schema documents integers, ffprobe derived values are not always
+        // whole; a single one of them must not fail the whole response
+        let info: VideoInfo = serde_json::from_str(
+            r#"{"duration": 22990.5, "format": "MP4", "bitrate": 1000.4,
+                "audio": {"bitrate": 128.5, "codec": "aac"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.duration, Some(22991));
+        assert_eq!(info.bitrate, Some(1000));
+        assert_eq!(info.audio.unwrap().bitrate, Some(129));
+    }
+
+    #[test]
+    fn file_info_metadata_may_be_null() {
+        // what a webhook delivery carries; REST v0.7 always sends an object
+        let info: FileInfo = serde_json::from_str(
+            r#"{"is_stored": true, "done": 1, "file_id": "x", "total": 1, "size": 1,
+                "uuid": "x", "is_image": false, "filename": "a.txt", "is_ready": true,
+                "original_filename": "a.txt", "mime_type": "text/plain",
+                "metadata": null}"#,
+        )
+        .unwrap();
+
+        assert!(info.metadata.is_empty());
+    }
+
+    #[test]
+    fn file_params_default_carries_no_metadata_or_tags() {
+        let params = FileParams::default();
+
+        assert!(params.metadata.is_empty());
+        assert_eq!(params.tags, None);
+    }
+
+    #[test]
+    fn from_url_params_default_carries_no_metadata_or_tags() {
+        let params = FromUrlParams::default();
+
+        assert!(params.metadata.is_empty());
+        assert_eq!(params.tags, None);
+    }
+
+    #[test]
+    fn multipart_params_default_leaves_part_size_to_the_api() {
+        let params = MultipartParams::default();
+
+        assert_eq!(params.part_size, None);
+        assert!(params.metadata.is_empty());
+        assert_eq!(params.tags, None);
+    }
 }

@@ -51,7 +51,7 @@ let creds = ucare::apicreds {
 // creating rest client
 let config = ucare::RestConfig {
     sign_based_auth: true,
-    api_version: ucare::RestApiVersion::v06,
+    api_version: ucare::RestApiVersion::V07,
 };
 let rest_client = ucare::RestClient::new(config, creds).unwrap();
 

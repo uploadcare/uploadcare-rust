@@ -3,40 +3,33 @@
 
 use rand::Rng;
 
-use ucare::{self, conversion, file, group, project, webhook};
+use ucare::{self, addons, conversion, file, group, project, webhook};
 
 mod testenv;
 
-fn rest_client_version(version: ucare::RestApiVersion) -> ucare::RestClient {
+fn rest_client() -> ucare::RestClient {
     let config = ucare::RestConfig {
         sign_based_auth: true,
-        api_version: version,
+        api_version: ucare::RestApiVersion::V07,
     };
 
     ucare::RestClient::new(config, testenv::api_creds()).unwrap()
 }
 
-fn rest_client_v05() -> ucare::RestClient {
-    rest_client_version(ucare::RestApiVersion::V05)
-}
-
-fn rest_client_v06() -> ucare::RestClient {
-    rest_client_version(ucare::RestApiVersion::V06)
-}
-
 #[test]
 fn file() {
-    let client = rest_client_v05();
+    let client = rest_client();
     let file_svc = file::new_svc(&client);
 
     let limit = 13;
 
     let params = file::ListParams {
-        removed: Some(false),
-        stored: Some(false),
+        removed: Some(file::Filter::False),
+        stored: Some(file::Filter::All),
         limit: Some(3),
-        ordering: Some(file::Ordering::Size),
+        ordering: Some(file::Ordering::DatetimeUploaded),
         from: None,
+        include: None,
     };
 
     // file list
@@ -60,7 +53,7 @@ fn file() {
 
     // file info
     let first_file = files.pop().unwrap();
-    let file = file_svc.info(&first_file.uuid).unwrap();
+    let file = file_svc.info(&first_file.uuid, None).unwrap();
 
     assert_eq!(file.uuid, first_file.uuid);
 
@@ -68,6 +61,41 @@ fn file() {
     let info = file_svc.store(&file.uuid).unwrap();
 
     assert_ne!(info.datetime_stored, None);
+
+    // metadata: set, read one, read all, delete
+    let value = file_svc
+        .set_metadata_value(&file.uuid, "subsystem", "sdk-test")
+        .unwrap();
+    assert_eq!(value, "sdk-test");
+    assert_eq!(
+        file_svc.metadata_value(&file.uuid, "subsystem").unwrap(),
+        "sdk-test",
+    );
+    assert_eq!(
+        file_svc.metadata(&file.uuid).unwrap().get("subsystem"),
+        Some(&"sdk-test".to_string()),
+    );
+    file_svc
+        .delete_metadata_value(&file.uuid, "subsystem")
+        .unwrap();
+    assert_eq!(file_svc.metadata(&file.uuid).unwrap().get("subsystem"), None);
+
+    // tags: add through both endpoints, then remove
+    let tags = file_svc.set_tags(&file.uuid, &["sdk-test"]).unwrap();
+    assert!(tags.tags.contains(&"sdk-test".to_string()));
+    let tags = file_svc
+        .update_tags(&file.uuid, &["sdk-test-extra"], &[])
+        .unwrap();
+    assert!(tags.tags.contains(&"sdk-test-extra".to_string()));
+    let tags = file_svc
+        .update_tags(&file.uuid, &[], &["sdk-test", "sdk-test-extra"])
+        .unwrap();
+    assert!(!tags.tags.contains(&"sdk-test".to_string()));
+    assert_eq!(
+        file_svc.tags(&file.uuid).unwrap().tags,
+        tags.tags,
+        "GET /tags/ must agree with the PATCH response",
+    );
 
     // batch store
     let batch_info = file_svc.batch_store(&[&files.pop().unwrap().uuid]).unwrap();
@@ -77,15 +105,16 @@ fn file() {
         None
     );
 
-    // file copy
+    // file copy: POST /files/ is 405 since v0.7, local_copy is the replacement
     let params = file::CopyParams {
         source: file.uuid.to_string(),
         store: None,
-        make_public: Some(file::MakePublic::True),
+        metadata: None,
+        make_public: None,
         target: None,
         pattern: None,
     };
-    let copy_info = file_svc.copy(params).unwrap();
+    let copy_info = file_svc.local_copy(params).unwrap();
 
     assert_eq!(copy_info.result.original_filename, file.original_filename);
 
@@ -96,8 +125,54 @@ fn file() {
 }
 
 #[test]
+fn search() {
+    let client = rest_client();
+    let file_svc = file::new_svc(&client);
+
+    // taking any existing file to look for it by an exact uuid match: that path
+    // bypasses the search index, so there is no lag to wait for
+    let params = file::ListParams {
+        removed: Some(file::Filter::False),
+        stored: Some(file::Filter::All),
+        limit: Some(1),
+        ordering: Some(file::Ordering::DatetimeUploaded),
+        from: None,
+        include: None,
+    };
+    let existing = file_svc
+        .list(params)
+        .unwrap()
+        .results
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    let params = file::SearchParams {
+        query: file::SearchQuery {
+            exact: Some(file::Exact {
+                uuid: Some(vec![existing.uuid.to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        limit: Some(1),
+        offset: None,
+        include: None,
+    };
+    let found = file_svc.search(params).unwrap();
+
+    let results = found.results.unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].info.uuid, existing.uuid);
+
+    // no criteria at all is a 400
+    let params = file::SearchParams::default();
+    assert!(file_svc.search(params).is_err());
+}
+
+#[test]
 fn group() {
-    let client = rest_client_v06();
+    let client = rest_client();
     let group_svc = group::new_svc(&client);
 
     let limit = 3;
@@ -133,23 +208,36 @@ fn group() {
 
 #[test]
 fn conversion() {
-    let client = rest_client_v06();
+    let client = rest_client();
     let file_svc = file::new_svc(&client);
     let conv_svc = conversion::new_svc(&client);
 
     let params = file::ListParams {
-        removed: Some(false),
-        stored: Some(false),
+        removed: Some(file::Filter::False),
+        stored: Some(file::Filter::All),
         limit: Some(1),
-        ordering: Some(file::Ordering::Size),
+        ordering: Some(file::Ordering::DatetimeUploaded),
         from: None,
+        include: None,
     };
     let list = file_svc.list(params).unwrap();
 
     // convert file
+    let source = list.results.unwrap().pop().unwrap().uuid;
+
+    // what this file can be converted to; must parse regardless of whether the
+    // file is convertible at all
+    let doc_info = conv_svc.document_info(&source).unwrap();
+    println!(
+        "document_info: error={:?}, groups={:?}",
+        doc_info.error,
+        doc_info.any_converted_groups(),
+    );
+
     let params = conversion::JobParams {
-        paths: vec![list.results.unwrap().pop().unwrap().uuid + "/document/-/format/pdf/"],
+        paths: vec![source + "/document/-/format/pdf/"],
         store: Some(conversion::ToStore::False),
+        save_in_group: None,
     };
     let job_result = conv_svc.document(params).unwrap();
     if let Some(mut jobs) = job_result.result {
@@ -164,33 +252,102 @@ fn conversion() {
 }
 
 #[test]
+fn addon() {
+    let client = rest_client();
+    let file_svc = file::new_svc(&client);
+    let addons_svc = addons::new_svc(&client);
+
+    let params = file::ListParams {
+        removed: Some(file::Filter::False),
+        stored: Some(file::Filter::All),
+        limit: Some(1),
+        ordering: Some(file::Ordering::DatetimeUploaded),
+        from: None,
+        include: None,
+    };
+    let target = file_svc
+        .list(params)
+        .unwrap()
+        .results
+        .unwrap()
+        .pop()
+        .unwrap();
+
+    let request_id = match addons_svc.execute(
+        "uc_clamav_virus_scan",
+        addons::ExecuteParams::new(&target.uuid),
+    ) {
+        Ok(execution) => execution.request_id,
+        Err(err) => match err.value() {
+            // the add-on may be disabled for the project (a per application
+            // permission) or already busy with this very file; neither says
+            // the client is wrong
+            ucare::ErrValue::Forbidden(_) | ucare::ErrValue::Conflict(_) => return,
+            other => panic!("virus scan failed to start: {}", other),
+        },
+    };
+    assert!(!request_id.is_empty());
+
+    // freshly started: any status is a pass, the point is that it parses
+    let info = addons_svc
+        .status("uc_clamav_virus_scan", &request_id)
+        .unwrap();
+    println!("virus scan status: {:?}", info.status);
+}
+
+#[test]
 fn webhook() {
     let sign_secret = "test_signing_secret";
     let new_sign_secret = "new_signing_secret";
 
-    let client = rest_client_v06();
+    let client = rest_client();
     let webhook_svc = webhook::new_svc(&client);
 
-    // list
-    let list = webhook_svc.list().unwrap();
-    assert!(list.len() > 0);
-    assert_ne!(list.get(0).unwrap().id, 0);
-
     // create
+    //
+    // the host has to resolve to a non private address, so localhost is not an
+    // option here: v0.7 rejects it at request validation time.
+    // the suffix is wide enough for collisions with leftovers of previously
+    // crashed runs to be negligible
     let mut rng = rand::thread_rng();
-    let suff: u8 = rng.gen();
-    let target_url = format!("https://localhost:8080/test_endpoint{}", suff);
+    let suff: u32 = rng.gen();
+    let target_url = format!("https://example.com/test_endpoint{}", suff);
     let create_params = webhook::CreateParams {
-        event: webhook::Event::FileUploaded,
+        event: webhook::Event::FileInfoUpdated,
         target_url: target_url.clone(),
         signing_secret: Some(sign_secret.to_string()),
         is_active: None,
+        version: None,
     };
     let hook = webhook_svc.create(create_params).unwrap();
     assert!(hook.is_active);
-    assert!(hook.created.len() > 0);
-    assert!(hook.updated.len() > 0);
-    assert_eq!(hook.signing_secret, sign_secret);
+    assert!(!hook.created.is_empty());
+    assert!(!hook.updated.is_empty());
+    assert_eq!(hook.signing_secret, Some(sign_secret.to_string()));
+    // created without an explicit version, still has to end up on 0.7
+    assert_eq!(hook.version, "0.7");
+
+    // list: now that at least one subscription exists, ours must be in it
+    let list = webhook_svc.list().unwrap();
+    assert!(list.iter().any(|h| h.id == hook.id));
+
+    // get by id
+    let fetched = webhook_svc.get(hook.id).unwrap();
+    assert_eq!(fetched.id, hook.id);
+    assert_eq!(fetched.target_url, target_url);
+
+    // subscribing to the same event and url again is a recognizable 400
+    let duplicate = webhook_svc.create(webhook::CreateParams {
+        event: webhook::Event::FileInfoUpdated,
+        target_url: target_url.clone(),
+        signing_secret: None,
+        is_active: None,
+        version: None,
+    });
+    match duplicate {
+        Err(err) => assert!(err.to_string().contains("already subscribed")),
+        Ok(_) => panic!("duplicate subscription was accepted"),
+    }
 
     // update
     let update_params = webhook::UpdateParams {
@@ -202,17 +359,30 @@ fn webhook() {
     };
     let hook = webhook_svc.update(update_params).unwrap();
     assert!(!hook.is_active);
-    assert_eq!(hook.signing_secret, new_sign_secret);
+    assert_eq!(hook.signing_secret, Some(new_sign_secret.to_string()));
 
-    // delete
+    // re-enabling a disabled subscription; the update is partial, so the
+    // signing secret set by the previous update has to survive it
+    let hook = webhook_svc
+        .update(webhook::UpdateParams {
+            id: hook.id,
+            event: None,
+            target_url: None,
+            signing_secret: None,
+            is_active: Some(true),
+        })
+        .unwrap();
+    assert!(hook.is_active);
+    assert_eq!(hook.signing_secret, Some(new_sign_secret.to_string()));
+
+    // delete: takes every subscription on that url, with a body on a DELETE request
     let delete_params = webhook::DeleteParams { target_url };
-    let res = webhook_svc.delete(delete_params).unwrap();
-    assert_eq!(res, ());
+    webhook_svc.delete(delete_params).unwrap();
 }
 
 #[test]
 fn project() {
-    let client = rest_client_v06();
+    let client = rest_client();
     let project_svc = project::new_svc(&client);
 
     // info

@@ -1,4 +1,4 @@
-//! Holds all primitives and logic related file entity.
+//! Holds all primitives and logic around the group resource.
 //!
 //! Individual files on Uploadcare can be joined into groups. Those can be used
 //! to better organize your workflow. Technically, groups are ordered lists of
@@ -19,7 +19,8 @@ use std::fmt::{self, Debug, Display};
 use reqwest::{Method, Url};
 use serde::Deserialize;
 
-use crate::ucare::{rest::Client, IntoUrlQuery, Result};
+use crate::file;
+use crate::ucare::{encode_query_value, rest::Client, IntoUrlQuery, Result};
 
 /// Service is used to make calls to group API.
 pub struct Service<'a> {
@@ -27,12 +28,12 @@ pub struct Service<'a> {
 }
 
 /// creates an instance of the group service
-pub fn new_svc(client: &Client) -> Service {
+pub fn new_svc(client: &Client) -> Service<'_> {
     Service { client }
 }
 
 impl Service<'_> {
-    /// Acquires some file specific info
+    /// Acquires group specific info, including the list of files in it
     pub fn info(&self, group_id: &str) -> Result<Info> {
         self.client.call::<String, String, Info>(
             Method::GET,
@@ -63,13 +64,13 @@ impl Service<'_> {
     /// }
     ///
     /// for group in groups.iter() {
-    ///     println!("group: {}", group);
+    ///     println!("group: {:?}", group);
     /// }
     /// ```
     pub fn list(&self, params: ListParams) -> Result<List> {
         self.client.call::<ListParams, String, List>(
             Method::GET,
-            format!("/groups/"),
+            "/groups/".to_string(),
             Some(params),
             None,
         )
@@ -81,11 +82,14 @@ impl Service<'_> {
         self.client.call_url::<String, List>(Method::GET, url, None)
     }
 
-    /// Marks all files in group as stored
-    pub fn store(&self, group_id: &str) -> Result<Info> {
-        self.client.call::<String, String, Info>(
-            Method::PUT,
-            format!("/groups/{}/storage/", group_id),
+    /// Removes a group by its id. Available since APIv0.7 only.
+    ///
+    /// The files in the group are not affected, only the group itself is
+    /// removed.
+    pub fn delete(&self, group_id: &str) -> Result<()> {
+        self.client.call::<String, String, ()>(
+            Method::DELETE,
+            format!("/groups/{}/", group_id),
             None,
             None,
         )
@@ -98,13 +102,19 @@ pub struct Info {
     /// group identifier
     pub id: String,
     /// date and time when a group was created
-    pub datetime_created: Option<String>,
-    /// date and time when a group was stored
-    pub datetime_stored: Option<String>,
+    pub datetime_created: String,
     /// number of files in a group
     pub files_count: i32,
     /// public CDN URL for a group
     pub cdn_url: String,
+    /// API resource URL for the group
+    pub url: Option<String>,
+    /// The files in the group, in their original order.
+    ///
+    /// Only returned by [`Service::info`]; list responses carry no file lists.
+    /// An element is `None` when the corresponding file has been removed.
+    #[serde(default)]
+    pub files: Option<Vec<Option<file::Info>>>,
 }
 
 /// Holds all possible params for for the list method
@@ -142,30 +152,19 @@ impl Display for Ordering {
 
 impl IntoUrlQuery for ListParams {
     fn into_query(self) -> String {
-        let mut q = String::new();
-
-        q.push_str("limit=");
+        // unset parameters are not sent, the documented server defaults apply
+        let mut parts: Vec<String> = Vec::new();
         if let Some(val) = self.limit {
-            q.push_str(val.to_string().as_str());
-        } else {
-            q.push_str("100");
+            parts.push(format!("limit={}", val));
         }
-        q.push('&');
-
-        q.push_str("ordering=");
         if let Some(val) = self.ordering {
-            q.push_str(val.to_string().as_str());
-        } else {
-            q.push_str(Ordering::CreatedAtAsc.to_string().as_str());
+            parts.push(format!("ordering={}", val));
+        }
+        if let Some(ref val) = self.from {
+            parts.push(format!("from={}", encode_query_value(val)));
         }
 
-        if let Some(val) = self.from {
-            q.push('&');
-            q.push_str("from=");
-            q.push_str(val.as_str());
-        }
-
-        q
+        parts.join("&")
     }
 }
 
@@ -179,7 +178,106 @@ pub struct List {
     /// Previous page URL.
     pub previous: Option<String>,
     /// A total number of objects of the queried type.
-    pub total: Option<f32>,
+    pub total: Option<i32>,
     /// Number of objects per page.
-    pub per_page: Option<f32>,
+    pub per_page: Option<i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn info_deserializes_without_datetime_stored() {
+        // v0.7 dropped datetime_stored together with the ability to mark a group
+        // as stored
+        let json = r#"{
+            "id": "badfc9f7-f88f-4921-9cc0-22e2c08aa2da~12",
+            "datetime_created": "2026-08-04T10:00:00Z",
+            "files_count": 12,
+            "cdn_url": "https://ucarecdn.com/badfc9f7-f88f-4921-9cc0-22e2c08aa2da~12/",
+            "url": "https://api.uploadcare.com/groups/badfc9f7-f88f-4921-9cc0-22e2c08aa2da~12/"
+        }"#;
+        let info: Info = serde_json::from_str(json).unwrap();
+
+        assert_eq!(info.files_count, 12);
+        assert_eq!(info.datetime_created, "2026-08-04T10:00:00Z");
+        assert_eq!(
+            info.url,
+            Some("https://api.uploadcare.com/groups/badfc9f7-f88f-4921-9cc0-22e2c08aa2da~12/".to_string()),
+        );
+        // list responses carry no `files`
+        assert!(info.files.is_none());
+    }
+
+    #[test]
+    fn info_files_may_hold_removed_placeholders() {
+        // the files array of the info endpoint contains null for removed files
+        let json = r#"{
+            "id": "badfc9f7-f88f-4921-9cc0-22e2c08aa2da~2",
+            "datetime_created": "2026-08-04T10:00:00Z",
+            "files_count": 2,
+            "cdn_url": "https://ucarecdn.com/badfc9f7-f88f-4921-9cc0-22e2c08aa2da~2/",
+            "files": [
+                null,
+                {
+                    "uuid": "1f067f79-cbc8-4b61-9c7b-1c1e0ea6b4b6",
+                    "size": 12345,
+                    "is_image": false,
+                    "is_ready": true,
+                    "metadata": {}
+                }
+            ]
+        }"#;
+        let info: Info = serde_json::from_str(json).unwrap();
+
+        let files = info.files.unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(files[0].is_none());
+        assert_eq!(
+            files[1].as_ref().unwrap().uuid,
+            "1f067f79-cbc8-4b61-9c7b-1c1e0ea6b4b6",
+        );
+    }
+
+    #[test]
+    fn list_totals_are_integers() {
+        let json = r#"{
+            "next": null,
+            "previous": null,
+            "total": 42,
+            "per_page": 100,
+            "results": []
+        }"#;
+        let list: List = serde_json::from_str(json).unwrap();
+
+        assert_eq!(list.total, Some(42));
+        assert_eq!(list.per_page, Some(100));
+    }
+
+    #[test]
+    fn list_params_query_defaults() {
+        let params = ListParams {
+            limit: None,
+            ordering: None,
+            from: None,
+        };
+
+        // nothing is sent, the documented server side defaults apply
+        assert_eq!(params.into_query(), "");
+    }
+
+    #[test]
+    fn list_params_query_full() {
+        let params = ListParams {
+            limit: Some(10),
+            ordering: Some(Ordering::CreatedAtDesc),
+            from: Some("2026-08-04T10:00:00+03:00".to_string()),
+        };
+
+        assert_eq!(
+            params.into_query(),
+            "limit=10&ordering=-datetime_created&from=2026-08-04T10%3A00%3A00%2B03%3A00",
+        );
+    }
 }
