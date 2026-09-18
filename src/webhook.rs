@@ -113,9 +113,25 @@ pub struct CreateParams {
 /// Events to subscribe for
 #[derive(Debug, Serialize)]
 pub enum Event {
-    /// Fires when file is uploaded
+    /// Fires when a file is uploaded
     #[serde(rename = "file.uploaded")]
     FileUploaded,
+    /// Fires when an uploaded file is found to be infected
+    #[serde(rename = "file.infected")]
+    FileInfected,
+    /// Fires when a file is stored
+    #[serde(rename = "file.stored")]
+    FileStored,
+    /// Fires when a file is deleted
+    #[serde(rename = "file.deleted")]
+    FileDeleted,
+    /// Fires when a file's info (metadata/tags/appdata) is updated
+    #[serde(rename = "file.info_updated")]
+    FileInfoUpdated,
+    /// Fires when a file's moderation state changes (e.g. malware/NSFW scan
+    /// verdict). Requires REST API `v0.7` or later to subscribe.
+    #[serde(rename = "moderation.state_changed")]
+    ModerationStateChanged,
 }
 
 /// Params for updating webhook
@@ -144,4 +160,37 @@ pub struct UpdateParams {
 pub struct DeleteParams {
     /// Webhook will be found and deleted by its target_url
     pub target_url: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_serializes_to_platform_strings() {
+        assert_eq!(
+            serde_json::to_string(&Event::FileUploaded).unwrap(),
+            "\"file.uploaded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Event::FileInfected).unwrap(),
+            "\"file.infected\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Event::FileStored).unwrap(),
+            "\"file.stored\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Event::FileDeleted).unwrap(),
+            "\"file.deleted\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Event::FileInfoUpdated).unwrap(),
+            "\"file.info_updated\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Event::ModerationStateChanged).unwrap(),
+            "\"moderation.state_changed\""
+        );
+    }
 }

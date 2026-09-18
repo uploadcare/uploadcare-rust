@@ -22,8 +22,11 @@ const API_URL: &str = "https://api.uploadcare.com";
 pub enum ApiVersion {
     /// API version v0.5
     V05,
-    /// API version v0.6 (prefered)
+    /// API version v0.6
     V06,
+    /// API version v0.7 (prefered). Required to subscribe to webhook events
+    /// other than `file.uploaded`, e.g. `moderation.state_changed`.
+    V07,
 }
 
 impl fmt::Display for ApiVersion {
@@ -31,6 +34,7 @@ impl fmt::Display for ApiVersion {
         match *self {
             ApiVersion::V05 => write!(f, "v0.5"),
             ApiVersion::V06 => write!(f, "v0.6"),
+            ApiVersion::V07 => write!(f, "v0.7"),
         }
     }
 }

@@ -1,3 +1,10 @@
+## Unreleased
+
+FEATURES:
+
+* Added the rest of the webhook event types (`file.infected`, `file.stored`, `file.deleted`, `file.info_updated`, `moderation.state_changed`) to `webhook::Event`
+* Added `ApiVersion::V07`, required to subscribe to webhook events other than `file.uploaded`
+
 ## 0.3.1 (Apr 16, 2026)
 
 IMPROVEMENTS:
